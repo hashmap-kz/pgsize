@@ -1,0 +1,25 @@
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+vendor/
+main
+.idea
+
+dist/
+bin/
+*.log
+coverage.txt
+__debug_bin*
+pprof/
+nohup.out
+
+# in progress
+.claude
+AGENTS.md
+CODESTYLE.md
+
