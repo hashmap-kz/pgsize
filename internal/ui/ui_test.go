@@ -136,7 +136,14 @@ func TestBloatBar(t *testing.T) {
 	}
 	for _, tc := range cases {
 		if got := bloatBar(tc.pct, tc.bloatPct, tc.width); got != tc.want {
-			t.Errorf("bloatBar(%v, %v, %d) = %q, want %q", tc.pct, tc.bloatPct, tc.width, got, tc.want)
+			t.Errorf(
+				"bloatBar(%v, %v, %d) = %q, want %q",
+				tc.pct,
+				tc.bloatPct,
+				tc.width,
+				got,
+				tc.want,
+			)
 		}
 	}
 }
@@ -179,7 +186,13 @@ func TestCacheKeys(t *testing.T) {
 	}
 }
 
-func newTestModel(view viewKind, dbs []pg.Database, schs []pg.Schema, tbls []pg.Table, rels []pg.Relation) model {
+func newTestModel(
+	view viewKind,
+	dbs []pg.Database,
+	schs []pg.Schema,
+	tbls []pg.Table,
+	rels []pg.Relation,
+) model {
 	return model{
 		view:     view,
 		dbs:      dbs,
@@ -411,7 +424,11 @@ func TestModelPageWindow(t *testing.T) {
 
 func TestModelApplySort(t *testing.T) {
 	t.Run("databases by size", func(t *testing.T) {
-		dbs := []pg.Database{{Name: "a", SizeBytes: 100}, {Name: "b", SizeBytes: 300}, {Name: "c", SizeBytes: 200}}
+		dbs := []pg.Database{
+			{Name: "a", SizeBytes: 100},
+			{Name: "b", SizeBytes: 300},
+			{Name: "c", SizeBytes: 200},
+		}
 		m := newTestModel(viewDatabases, dbs, nil, nil, nil)
 		m.sort = sortSize
 		m.applySort()

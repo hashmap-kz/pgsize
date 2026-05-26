@@ -34,7 +34,16 @@ func TestRelKindIsIndex(t *testing.T) {
 		}
 	}
 
-	isIndex := []RelKind{RelBtree, RelGin, RelGist, RelHash, RelBrin, RelSpgist, RelUnknown, RelKind(99)}
+	isIndex := []RelKind{
+		RelBtree,
+		RelGin,
+		RelGist,
+		RelHash,
+		RelBrin,
+		RelSpgist,
+		RelUnknown,
+		RelKind(99),
+	}
 	for _, k := range isIndex {
 		if !k.IsIndex() {
 			t.Errorf("RelKind(%d).IsIndex() = false, want true", k)

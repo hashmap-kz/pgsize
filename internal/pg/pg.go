@@ -195,17 +195,37 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		var bloatPct float64
 		var idxName *string
 		var idxSize *int64
-		if err := rows.Scan(&schName, &name, &total, &rowCount, &bloatPct, &idxName, &idxSize); err != nil {
+		if err := rows.Scan(
+			&schName,
+			&name,
+			&total,
+			&rowCount,
+			&bloatPct,
+			&idxName,
+			&idxSize,
+		); err != nil {
 			return nil, err
 		}
 		t, ok := tables[name]
 		if !ok {
 			order = append(order, name)
-			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total), RowCount: rowCount, BloatPct: bloatPct} //nolint:gosec
+			tables[name] = &Table{
+				Schema:     schName,
+				Name:       name,
+				TotalBytes: uint64(total), //nolint:gosec
+				RowCount:   rowCount,
+				BloatPct:   bloatPct,
+			}
 			t = tables[name]
 		}
 		if idxName != nil && idxSize != nil {
-			t.Indexes = append(t.Indexes, Index{Name: *idxName, SizeBytes: uint64(*idxSize)}) //nolint:gosec
+			t.Indexes = append(
+				t.Indexes,
+				Index{
+					Name:      *idxName,
+					SizeBytes: uint64(*idxSize), //nolint:gosec
+				},
+			)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -219,7 +239,11 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	return out, nil
 }
 
-func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string) ([]Relation, error) {
+func ListRelations(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	schema, table string,
+) ([]Relation, error) {
 	const q = `
 		WITH t AS (
 		    SELECT c.oid, c.reltoastrelid
