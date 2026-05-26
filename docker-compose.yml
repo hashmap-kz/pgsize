@@ -71,3 +71,5 @@ configs:
       datestyle                = 'iso, mdy'
       timezone                 = 'Asia/Aqtau'
       shared_preload_libraries = 'pg_stat_statements'
+      # !!! NOTE: for demo ONLY !!!
+      autovacuum = off

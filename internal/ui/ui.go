@@ -101,8 +101,8 @@ type loadedRelations struct {
 	err    error
 }
 
-func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) model {
-	return model{
+func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) tea.Model {
+	return &model{
 		pool:     pool,
 		dsn:      dsn,
 		view:     viewDatabases,
@@ -945,7 +945,7 @@ func bloatBar(pct, bloatPct float64, width int) string {
 	bloat := filled - live
 	bloatStr := ""
 	if bloat > 0 {
-		bloatStr = bloatStyle.Render(strings.Repeat("░", bloat))
+		bloatStr = bloatStyle.Render(strings.Repeat("!", bloat))
 	}
 	return "[" + strings.Repeat("#", live) + bloatStr + strings.Repeat(" ", width-filled) + "]"
 }

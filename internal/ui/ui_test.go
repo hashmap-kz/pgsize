@@ -123,14 +123,14 @@ func TestBloatBar(t *testing.T) {
 		want     string
 	}{
 		{100, 0, 4, "[####]"},   // no bloat: identical to bar()
-		{100, 50, 4, "[##░░]"},  // 50% bloat: half live, half dead
-		{100, 100, 4, "[░░░░]"}, // 100% bloat: all dead
+		{100, 50, 4, "[##!!]"},  // 50% bloat: half live, half dead
+		{100, 100, 4, "[!!!!]"}, // 100% bloat: all dead
 		{50, 0, 4, "[##  ]"},    // no bloat, half full
-		{50, 50, 4, "[#░  ]"},   // half full, half of that is bloat
+		{50, 50, 4, "[#!  ]"},   // half full, half of that is bloat
 		{0, 0, 4, "[    ]"},     // empty table
 		{0, 75, 4, "[    ]"},    // no size, bloat irrelevant
 		{100, 0, 0, "[]"},       // zero width
-		{150, 50, 4, "[##░░]"},  // pct clamped to width
+		{150, 50, 4, "[##!!]"},  // pct clamped to width
 	}
 	for _, tc := range cases {
 		if got := bloatBar(tc.pct, tc.bloatPct, tc.width); got != tc.want {
