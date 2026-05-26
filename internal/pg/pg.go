@@ -2,16 +2,13 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Database struct {
-	Name       string
-	SizeBytes  uint64
-	TableCount uint32
-	IndexCount uint32
+	Name      string
+	SizeBytes uint64
 }
 
 type Schema struct {
@@ -79,7 +76,7 @@ func ListDatabases(ctx context.Context, pool *pgxpool.Pool) ([]Database, error) 
 	const q = `
 		SELECT
 		    d.datname,
-		    pg_database_size(d.datname)::bigint AS size_bytes
+		    pg_database_size(d.oid)::bigint AS size_bytes
 		FROM pg_database d
 		WHERE NOT d.datistemplate
 		  AND has_database_privilege(d.datname, 'CONNECT')
@@ -147,21 +144,15 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		    n.nspname,
 		    c.relname,
 		    pg_total_relation_size(c.oid)::bigint AS total,
-		    COALESCE(
-		        (SELECT json_agg(json_build_object(
-		                    'name', i.relname,
-		                    'size', pg_relation_size(i.oid)::bigint
-		                ) ORDER BY pg_relation_size(i.oid) DESC)
-		         FROM pg_index x
-		         JOIN pg_class i ON i.oid = x.indexrelid
-		         WHERE x.indrelid = c.oid),
-		        '[]'::json
-		    ) AS indexes
+		    i.relname                             AS idx_name,
+		    pg_relation_size(i.oid)::bigint       AS idx_size
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_index x ON x.indrelid = c.oid
+		LEFT JOIN pg_class i ON i.oid = x.indexrelid
 		WHERE c.relkind IN ('r','p')
 		  AND n.nspname = $1
-		ORDER BY total DESC
+		ORDER BY total DESC, c.oid, idx_size DESC NULLS LAST
 	`
 	rows, err := pool.Query(ctx, q, schema)
 	if err != nil {
@@ -169,29 +160,36 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	}
 	defer rows.Close()
 
-	var out []Table
-	for rows.Next() {
-		var t Table
-		var total int64
-		var idxJSON []byte
-		if err := rows.Scan(&t.Schema, &t.Name, &total, &idxJSON); err != nil {
-			return nil, err
-		}
-		t.TotalBytes = uint64(total)
+	var order []string
+	tables := make(map[string]*Table)
 
-		var raw []struct {
-			Name string `json:"name"`
-			Size int64  `json:"size"`
-		}
-		if err := json.Unmarshal(idxJSON, &raw); err != nil {
+	for rows.Next() {
+		var schName, name string
+		var total int64
+		var idxName *string
+		var idxSize *int64
+		if err := rows.Scan(&schName, &name, &total, &idxName, &idxSize); err != nil {
 			return nil, err
 		}
-		for _, r := range raw {
-			t.Indexes = append(t.Indexes, Index{Name: r.Name, SizeBytes: uint64(r.Size)})
+		t, ok := tables[name]
+		if !ok {
+			order = append(order, name)
+			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total)}
+			t = tables[name]
 		}
-		out = append(out, t)
+		if idxName != nil && idxSize != nil {
+			t.Indexes = append(t.Indexes, Index{Name: *idxName, SizeBytes: uint64(*idxSize)})
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]Table, len(order))
+	for i, name := range order {
+		out[i] = *tables[name]
+	}
+	return out, nil
 }
 
 func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string) ([]Relation, error) {

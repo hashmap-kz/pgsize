@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/hashmap-kz/pgsize/internal/pg"
@@ -42,12 +43,18 @@ type model struct {
 	cursor int
 	sort   sortMode
 
-	filter     string
-	filterMode bool
+	filter      string
+	filterLower string
+	filterMode  bool
 
 	curDB     string
 	curSchema string
 	curTable  string
+
+	schCache  map[string][]pg.Schema
+	tblCache  map[string][]pg.Table
+	relCache  map[string][]pg.Relation
+	poolCache map[string]*pgxpool.Pool
 
 	width  int
 	height int
@@ -80,11 +87,15 @@ type loadedRelations struct {
 
 func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) model {
 	return model{
-		pool: pool,
-		dsn:  dsn,
-		view: viewDatabases,
-		dbs:  dbs,
-		sort: sortSize,
+		pool:      pool,
+		dsn:       dsn,
+		view:      viewDatabases,
+		dbs:       dbs,
+		sort:      sortSize,
+		schCache:  make(map[string][]pg.Schema),
+		tblCache:  make(map[string][]pg.Table),
+		relCache:  make(map[string][]pg.Relation),
+		poolCache: make(map[string]*pgxpool.Pool),
 	}
 }
 
@@ -107,11 +118,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		if m.dbPool != nil {
-			m.dbPool.Close()
-		}
 		m.dbPool = msg.pool
 		m.schs = msg.items
+		m.schCache[m.curDB] = msg.items
+		m.poolCache[m.curDB] = msg.pool
 		m.view = viewSchemas
 		m.cursor = 0
 		return m, nil
@@ -122,6 +132,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.tbls = msg.items
+		m.tblCache[m.curDB+"\x00"+m.curSchema] = msg.items
 		m.view = viewTables
 		m.cursor = 0
 		return m, nil
@@ -132,6 +143,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rels = msg.items
+		m.relCache[m.curDB+"\x00"+m.curSchema+"\x00"+m.curTable] = msg.items
 		m.view = viewRelations
 		m.cursor = 0
 		return m, nil
@@ -173,6 +185,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.filterMode = true
 		m.filter = ""
+		m.filterLower = ""
 	}
 	return m, nil
 }
@@ -184,10 +197,12 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "backspace":
 		if len(m.filter) > 0 {
 			m.filter = m.filter[:len(m.filter)-1]
+			m.filterLower = strings.ToLower(m.filter)
 		}
 	default:
 		if len(msg.String()) == 1 {
 			m.filter += msg.String()
+			m.filterLower = strings.ToLower(m.filter)
 		}
 	}
 	return m, nil
@@ -228,6 +243,13 @@ func (m *model) drillIn() tea.Cmd {
 		m.stack = append(m.stack, f)
 		dbName := m.dbs[m.cursor].Name
 		m.curDB = dbName
+		if schs, ok := m.schCache[dbName]; ok {
+			m.dbPool = m.poolCache[dbName]
+			m.schs = schs
+			m.view = viewSchemas
+			m.cursor = 0
+			return nil
+		}
 		dsn := m.dsn
 		return func() tea.Msg {
 			cfg, err := pgxpool.ParseConfig(dsn)
@@ -249,6 +271,13 @@ func (m *model) drillIn() tea.Cmd {
 	case viewSchemas:
 		m.stack = append(m.stack, f)
 		m.curSchema = m.schs[m.cursor].Name
+		cacheKey := m.curDB + "\x00" + m.curSchema
+		if tbls, ok := m.tblCache[cacheKey]; ok {
+			m.tbls = tbls
+			m.view = viewTables
+			m.cursor = 0
+			return nil
+		}
 		pool, sch := m.queryPool(), m.curSchema
 		return func() tea.Msg {
 			items, err := pg.ListTables(context.Background(), pool, sch)
@@ -257,6 +286,13 @@ func (m *model) drillIn() tea.Cmd {
 	case viewTables:
 		m.stack = append(m.stack, f)
 		m.curTable = m.tbls[m.cursor].Name
+		cacheKey := m.curDB + "\x00" + m.curSchema + "\x00" + m.curTable
+		if rels, ok := m.relCache[cacheKey]; ok {
+			m.rels = rels
+			m.view = viewRelations
+			m.cursor = 0
+			return nil
+		}
 		pool, sch, tbl := m.queryPool(), m.curSchema, m.curTable
 		return func() tea.Msg {
 			items, err := pg.ListRelations(context.Background(), pool, sch, tbl)
@@ -272,12 +308,8 @@ func (m *model) drillOut() {
 	}
 	f := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
-	// Going back to databases: release the per-database pool.
 	if f.view == viewDatabases {
-		if m.dbPool != nil {
-			m.dbPool.Close()
-			m.dbPool = nil
-		}
+		m.dbPool = nil
 	}
 	m.view = f.view
 	m.cursor = f.cursor
@@ -287,7 +319,26 @@ func (m *model) drillOut() {
 }
 
 func (m *model) applySort() {
-	// left as a sketch: sort the active slice by size or name
+	switch m.view {
+	case viewDatabases:
+		if m.sort == sortSize {
+			sort.Slice(m.dbs, func(i, j int) bool { return m.dbs[i].SizeBytes > m.dbs[j].SizeBytes })
+		} else {
+			sort.Slice(m.dbs, func(i, j int) bool { return m.dbs[i].Name < m.dbs[j].Name })
+		}
+	case viewSchemas:
+		if m.sort == sortSize {
+			sort.Slice(m.schs, func(i, j int) bool { return m.schs[i].SizeBytes > m.schs[j].SizeBytes })
+		} else {
+			sort.Slice(m.schs, func(i, j int) bool { return m.schs[i].Name < m.schs[j].Name })
+		}
+	case viewTables:
+		if m.sort == sortSize {
+			sort.Slice(m.tbls, func(i, j int) bool { return m.tbls[i].TotalBytes > m.tbls[j].TotalBytes })
+		} else {
+			sort.Slice(m.tbls, func(i, j int) bool { return m.tbls[i].Name < m.tbls[j].Name })
+		}
+	}
 }
 
 // rendering
@@ -398,7 +449,7 @@ func (m model) renderDatabases() string {
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %s\n", "SIZE", "%", "", "NAME")
 	for i := start; i < end; i++ {
 		d := m.dbs[i]
-		if !match(d.Name, m.filter) {
+		if !match(d.Name, m.filterLower) {
 			continue
 		}
 		pct := 0.0
@@ -431,7 +482,7 @@ func (m model) renderSchemas() string {
 		"SIZE", "%", "", "SCHEMA", "TABLES", "IDX")
 	for i := start; i < end; i++ {
 		s := m.schs[i]
-		if !match(s.Name, m.filter) {
+		if !match(s.Name, m.filterLower) {
 			continue
 		}
 		pct := 0.0
@@ -460,7 +511,7 @@ func (m model) renderTables() string {
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %s\n", "SIZE", "%", "", "TABLE")
 	for i := start; i < end; i++ {
 		t := m.tbls[i]
-		if !match(t.Name, m.filter) {
+		if !match(t.Name, m.filterLower) {
 			continue
 		}
 		pct := 0.0
@@ -495,7 +546,7 @@ func (m model) renderRelations() string {
 	indexHeaderShown := false
 	for i := start; i < end; i++ {
 		r := m.rels[i]
-		if !match(r.Name, m.filter) {
+		if !match(r.Name, m.filterLower) {
 			continue
 		}
 
@@ -551,12 +602,14 @@ func cursor(i, c int) string {
 	return " "
 }
 
-func match(name, filter string) bool {
-	if filter == "" {
+func match(name, filterLower string) bool {
+	if filterLower == "" {
 		return true
 	}
-	return strings.Contains(strings.ToLower(name), strings.ToLower(filter))
+	return strings.Contains(strings.ToLower(name), filterLower)
 }
+
+var sizeUnits = []string{"KB", "MB", "GB", "TB", "PB"}
 
 func humanize(b uint64) string {
 	const unit = 1024
@@ -568,8 +621,7 @@ func humanize(b uint64) string {
 		div *= unit
 		exp++
 	}
-	units := []string{"KB", "MB", "GB", "TB", "PB"}
-	return fmt.Sprintf("%.1f %s", float64(b)/float64(div), units[exp])
+	return fmt.Sprintf("%.1f %s", float64(b)/float64(div), sizeUnits[exp])
 }
 
 func bar(pct float64, width int) string {
