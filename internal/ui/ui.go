@@ -581,12 +581,19 @@ func (m *model) View() string {
 		return fmt.Sprintf("error: %v\n\n [backspace] dismiss  [q] quit", m.err)
 	}
 
+	body := m.renderBody()
+	if m.height > 5 {
+		if need := m.height - 5 - strings.Count(body, "\n"); need > 0 {
+			body += strings.Repeat("\n", need)
+		}
+	}
+
 	var b strings.Builder
 	b.WriteString(m.renderHeader())
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("-", m.width))
 	b.WriteString("\n")
-	b.WriteString(m.renderBody())
+	b.WriteString(body)
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("-", m.width))
 	b.WriteString("\n")
