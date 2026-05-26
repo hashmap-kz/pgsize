@@ -14,9 +14,51 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var Version = "dev"
+
+var usage = `pgsize - interactive TUI for exploring PostgreSQL database sizes
+
+Browse databases, schemas, tables, and index sizes in a terminal UI.
+Connect with a DSN or rely on libpq environment variables (PGHOST, PGUSER, etc.).
+
+Usage:
+  pgsize [flags]
+
+Examples:
+  pgsize
+  pgsize --dsn "postgres://user:pass@localhost/mydb"
+  pgsize --dsn "$DATABASE_URL"
+
+Keys:
+  enter / l / right    drill in
+  backspace / h / left go back
+  j / down             move down
+  k / up               move up
+  g / home             jump to top
+  G / end              jump to bottom
+  s                    toggle sort (size / name)
+  /                    filter
+  r                    reload
+  q / ctrl+c           quit
+
+Flags:
+`
+
 func main() {
 	dsn := flag.String("dsn", "", "Postgres connection string; if empty, PG* env vars/libpq defaults are used")
+	showVer := flag.Bool("version", false, "print version and exit")
+
+	flag.Usage = func() {
+		fmt.Fprint(os.Stderr, usage)
+		flag.PrintDefaults()
+		fmt.Fprintln(os.Stderr)
+	}
 	flag.Parse()
+
+	if *showVer {
+		fmt.Printf("%s\n", Version)
+		os.Exit(0)
+	}
 
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, *dsn)

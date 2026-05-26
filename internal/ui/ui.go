@@ -893,7 +893,6 @@ func humanize(b uint64) string {
 	return fmt.Sprintf("%.1f %s", float64(b)/float64(div), sizeUnits[exp])
 }
 
-//nolint:unparam
 func bar(pct float64, width int) string {
 	filled := int((pct / 100.0) * float64(width))
 	if filled > width {
