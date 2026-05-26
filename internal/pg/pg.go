@@ -14,6 +14,7 @@ type Database struct {
 type Schema struct {
 	Name       string
 	SizeBytes  uint64
+	RowCount   int64
 	TableCount uint32
 	IndexCount uint32
 }
@@ -27,6 +28,7 @@ type Table struct {
 	Schema     string
 	Name       string
 	TotalBytes uint64
+	RowCount   int64
 	Indexes    []Index
 }
 
@@ -121,6 +123,7 @@ func ListSchemas(ctx context.Context, pool *pgxpool.Pool) ([]Schema, error) {
 		SELECT
 		    n.nspname,
 		    COALESCE(SUM(pg_total_relation_size(c.oid)) FILTER (WHERE c.relkind IN ('r','p','m')), 0)::bigint AS size_bytes,
+		    COALESCE(SUM(GREATEST(c.reltuples::bigint, 0)) FILTER (WHERE c.relkind IN ('r','p','m')), 0)      AS row_count,
 		    COUNT(*) FILTER (WHERE c.relkind IN ('r','p','m'))::int AS table_count,
 		    COUNT(*) FILTER (WHERE c.relkind IN ('i','I'))::int     AS index_count
 		FROM pg_namespace n
@@ -142,7 +145,7 @@ func ListSchemas(ctx context.Context, pool *pgxpool.Pool) ([]Schema, error) {
 		var s Schema
 		var size int64
 		var tcount, icount int32
-		if err := rows.Scan(&s.Name, &size, &tcount, &icount); err != nil {
+		if err := rows.Scan(&s.Name, &size, &s.RowCount, &tcount, &icount); err != nil {
 			return nil, err
 		}
 		s.SizeBytes = uint64(size)
@@ -159,6 +162,7 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		    n.nspname,
 		    c.relname,
 		    pg_total_relation_size(c.oid)::bigint AS total,
+		    GREATEST(c.reltuples::bigint, 0)      AS row_count,
 		    i.relname                             AS idx_name,
 		    pg_relation_size(i.oid)::bigint       AS idx_size
 		FROM pg_class c
@@ -180,16 +184,16 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 
 	for rows.Next() {
 		var schName, name string
-		var total int64
+		var total, rowCount int64
 		var idxName *string
 		var idxSize *int64
-		if err := rows.Scan(&schName, &name, &total, &idxName, &idxSize); err != nil {
+		if err := rows.Scan(&schName, &name, &total, &rowCount, &idxName, &idxSize); err != nil {
 			return nil, err
 		}
 		t, ok := tables[name]
 		if !ok {
 			order = append(order, name)
-			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total)}
+			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total), RowCount: rowCount}
 			t = tables[name]
 		}
 		if idxName != nil && idxSize != nil {

@@ -15,6 +15,12 @@ Fast size viewer for PostgreSQL cluster (ncdu for pg).
 
 ## Install
 
+**Using installation script**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hashmap-kz/pgsize/master/scripts/install.sh | sh
+```
+
 **Using Go:**
 
 ```bash

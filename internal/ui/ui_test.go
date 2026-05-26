@@ -91,6 +91,30 @@ func TestHumanize(t *testing.T) {
 	}
 }
 
+func TestHumanizeCount(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0"},
+		{-1, "0"},
+		{1, "~1"},
+		{999, "~999"},
+		{1_000, "~1.0K"},
+		{1_500, "~1.5K"},
+		{999_999, "~1000.0K"},
+		{1_000_000, "~1.0M"},
+		{12_500_000, "~12.5M"},
+		{1_000_000_000, "~1.0B"},
+		{5_250_000_000, "~5.2B"},
+	}
+	for _, tc := range cases {
+		if got := humanizeCount(tc.n); got != tc.want {
+			t.Errorf("humanizeCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestBar(t *testing.T) {
 	cases := []struct {
 		pct   float64
