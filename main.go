@@ -15,10 +15,7 @@ import (
 )
 
 func main() {
-	dsn := flag.String("dsn",
-		"postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable",
-		"Postgres connection string (or use PG* env vars)",
-	)
+	dsn := flag.String("dsn", "", "Postgres connection string; if empty, PG* env vars/libpq defaults are used")
 	flag.Parse()
 
 	ctx := context.Background()

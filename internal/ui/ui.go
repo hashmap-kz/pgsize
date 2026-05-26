@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/hashmap-kz/pgsize/internal/pg"
 
@@ -30,9 +31,8 @@ const (
 )
 
 type model struct {
-	pool   *pgxpool.Pool // base pool (always connected to initial DB)
-	dbPool *pgxpool.Pool // pool for the currently-selected database; nil at root
-	dsn    string        // original DSN for reconnecting to a chosen database
+	pool *pgxpool.Pool // base pool, connected to the initial database
+	dsn  string        // original DSN for reconnecting to a chosen database
 
 	view   viewKind
 	dbs    []pg.Database
@@ -51,12 +51,12 @@ type model struct {
 	curSchema string
 	curTable  string
 
-	schCache  map[string][]pg.Schema
-	tblCache  map[string][]pg.Table
-	relCache  map[string][]pg.Relation
-	poolCache map[string]*pgxpool.Pool
+	schCache map[string][]pg.Schema
+	tblCache map[string][]pg.Table
+	relCache map[string][]pg.Relation
 
 	loading bool
+	loadID  uint64
 
 	width  int
 	height int
@@ -74,34 +74,42 @@ type frame struct {
 // messages
 
 type loadedDatabases struct {
-	items []pg.Database
-	err   error
+	loadID uint64
+	items  []pg.Database
+	err    error
 }
 type loadedSchemas struct {
-	items []pg.Schema
-	pool  *pgxpool.Pool // non-nil when a new per-database pool was created
-	err   error
+	loadID uint64
+	db     string
+	items  []pg.Schema
+	err    error
 }
 type loadedTables struct {
-	items []pg.Table
-	err   error
+	loadID uint64
+	db     string
+	schema string
+	items  []pg.Table
+	err    error
 }
 type loadedRelations struct {
-	items []pg.Relation
-	err   error
+	loadID uint64
+	db     string
+	schema string
+	table  string
+	items  []pg.Relation
+	err    error
 }
 
 func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) model {
 	return model{
-		pool:      pool,
-		dsn:       dsn,
-		view:      viewDatabases,
-		dbs:       dbs,
-		sort:      sortSize,
-		schCache:  make(map[string][]pg.Schema),
-		tblCache:  make(map[string][]pg.Table),
-		relCache:  make(map[string][]pg.Relation),
-		poolCache: make(map[string]*pgxpool.Pool),
+		pool:     pool,
+		dsn:      dsn,
+		view:     viewDatabases,
+		dbs:      dbs,
+		sort:     sortSize,
+		schCache: make(map[string][]pg.Schema),
+		tblCache: make(map[string][]pg.Table),
+		relCache: make(map[string][]pg.Relation),
 	}
 }
 
@@ -120,60 +128,81 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 
 	case loadedDatabases:
+		if !m.acceptLoad(msg.loadID) {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.dbs = msg.items
+		m.cursor = m.firstVisibleOrZero()
 		return m, nil
 
 	case loadedSchemas:
+		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
-		if msg.pool != nil {
-			m.dbPool = msg.pool
-			m.poolCache[m.curDB] = msg.pool
-		}
 		m.schs = msg.items
-		m.schCache[m.curDB] = msg.items
+		m.schCache[msg.db] = msg.items
 		m.view = viewSchemas
-		m.cursor = 0
+		m.cursor = m.firstVisibleOrZero()
 		return m, nil
 
 	case loadedTables:
+		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.tbls = msg.items
-		m.tblCache[m.curDB+"\x00"+m.curSchema] = msg.items
+		m.tblCache[tableCacheKey(msg.db, msg.schema)] = msg.items
 		m.view = viewTables
-		m.cursor = 0
+		m.cursor = m.firstVisibleOrZero()
 		return m, nil
 
 	case loadedRelations:
+		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema || msg.table != m.curTable {
+			return m, nil
+		}
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
 			return m, nil
 		}
 		m.rels = msg.items
-		m.relCache[m.curDB+"\x00"+m.curSchema+"\x00"+m.curTable] = msg.items
+		m.relCache[relationCacheKey(msg.db, msg.schema, msg.table)] = msg.items
 		m.view = viewRelations
-		m.cursor = 0
+		m.cursor = m.firstVisibleOrZero()
 		return m, nil
 	}
 	return m, nil
 }
 
+func (m model) acceptLoad(loadID uint64) bool {
+	return loadID != 0 && loadID == m.loadID
+}
+
+func (m *model) nextLoadID() uint64 {
+	m.loadID++
+	return m.loadID
+}
+
 func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "q" || msg.String() == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if m.loading {
+		return m, nil
 	}
 	if m.err != nil {
 		switch msg.String() {
@@ -184,21 +213,13 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "j", "down":
-		if next := m.nextMatch(m.cursor+1, 1); next >= 0 {
-			m.cursor = next
-		}
+		m.moveVisible(1)
 	case "k", "up":
-		if prev := m.nextMatch(m.cursor-1, -1); prev >= 0 {
-			m.cursor = prev
-		}
+		m.moveVisible(-1)
 	case "g", "home":
-		if first := m.nextMatch(0, 1); first >= 0 {
-			m.cursor = first
-		}
+		m.cursor = m.firstVisibleOrZero()
 	case "G", "end":
-		if last := m.nextMatch(m.rowCount()-1, -1); last >= 0 {
-			m.cursor = last
-		}
+		m.cursor = m.lastVisibleOrZero()
 	case "enter", "l", "right":
 		return m, m.drillIn()
 	case "backspace", "h", "left":
@@ -210,39 +231,42 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sort = sortSize
 		}
 		m.applySort()
+		m.cursor = m.firstVisibleOrZero()
 	case "r":
 		return m, m.reload()
 	case "/":
 		m.filterMode = true
 		m.filter = ""
 		m.filterLower = ""
+		m.cursor = m.firstVisibleOrZero()
 	}
 	return m, nil
 }
 
 func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "q" || msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+	if m.loading {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc", "enter":
 		m.filterMode = false
 	case "backspace":
-		if len(m.filter) > 0 {
-			m.filter = m.filter[:len(m.filter)-1]
-			m.filterLower = strings.ToLower(m.filter)
-			if !m.matchAt(m.cursor) {
-				if first := m.nextMatch(0, 1); first >= 0 {
-					m.cursor = first
-				}
+		if m.filter != "" {
+			r, size := utf8.DecodeLastRuneInString(m.filter)
+			if r != utf8.RuneError || size > 0 {
+				m.filter = m.filter[:len(m.filter)-size]
 			}
+			m.filterLower = strings.ToLower(m.filter)
+			m.cursor = m.firstVisibleOrZero()
 		}
 	default:
-		if len(msg.String()) == 1 {
-			m.filter += msg.String()
+		if s := msg.String(); utf8.RuneCountInString(s) == 1 {
+			m.filter += s
 			m.filterLower = strings.ToLower(m.filter)
-			if !m.matchAt(m.cursor) {
-				if first := m.nextMatch(0, 1); first >= 0 {
-					m.cursor = first
-				}
-			}
+			m.cursor = m.firstVisibleOrZero()
 		}
 	}
 	return m, nil
@@ -284,39 +308,76 @@ func (m model) matchAt(i int) bool {
 	return false
 }
 
-func (m model) nextMatch(start, dir int) int {
+func (m model) visibleIndexes() []int {
 	n := m.rowCount()
-	for i := start; i >= 0 && i < n; i += dir {
+	out := make([]int, 0, n)
+	for i := 0; i < n; i++ {
 		if m.matchAt(i) {
-			return i
+			out = append(out, i)
 		}
 	}
-	return -1
+	return out
+}
+
+func (m model) firstVisibleOrZero() int {
+	visible := m.visibleIndexes()
+	if len(visible) == 0 {
+		return 0
+	}
+	return visible[0]
+}
+
+func (m model) lastVisibleOrZero() int {
+	visible := m.visibleIndexes()
+	if len(visible) == 0 {
+		return 0
+	}
+	return visible[len(visible)-1]
+}
+
+func (m model) visibleCursorOrFirst() int {
+	if m.matchAt(m.cursor) {
+		return m.cursor
+	}
+	return m.firstVisibleOrZero()
+}
+
+func (m *model) moveVisible(delta int) {
+	visible := m.visibleIndexes()
+	if len(visible) == 0 {
+		m.cursor = 0
+		return
+	}
+	pos := 0
+	for i, idx := range visible {
+		if idx == m.cursor {
+			pos = i
+			break
+		}
+	}
+	pos += delta
+	if pos < 0 {
+		pos = 0
+	}
+	if pos >= len(visible) {
+		pos = len(visible) - 1
+	}
+	m.cursor = visible[pos]
 }
 
 func (m model) filteredPos() (pos, total int) {
-	n := m.rowCount()
-	for i := 0; i < n; i++ {
-		if m.matchAt(i) {
-			total++
-			if i == m.cursor {
-				pos = total
-			}
+	visible := m.visibleIndexes()
+	total = len(visible)
+	for i, idx := range visible {
+		if idx == m.cursor {
+			return i + 1, total
 		}
 	}
-	return pos, total
-}
-
-// queryPool returns the pool to use for schema/table/relation queries.
-func (m model) queryPool() *pgxpool.Pool {
-	if m.dbPool != nil {
-		return m.dbPool
-	}
-	return m.pool
+	return 0, total
 }
 
 func (m *model) drillIn() tea.Cmd {
-	if m.rowCount() == 0 {
+	if m.rowCount() == 0 || !m.matchAt(m.cursor) {
 		return nil
 	}
 	f := frame{
@@ -325,66 +386,64 @@ func (m *model) drillIn() tea.Cmd {
 	}
 	switch m.view {
 	case viewDatabases:
-		m.stack = append(m.stack, f)
 		dbName := m.dbs[m.cursor].Name
+		m.stack = append(m.stack, f)
 		m.curDB = dbName
+		m.curSchema = ""
+		m.curTable = ""
 		if schs, ok := m.schCache[dbName]; ok {
-			m.dbPool = m.poolCache[dbName]
 			m.schs = schs
 			m.view = viewSchemas
-			m.cursor = 0
+			m.cursor = m.firstVisibleOrZero()
 			return nil
 		}
 		m.loading = true
+		loadID := m.nextLoadID()
 		dsn := m.dsn
 		return func() tea.Msg {
-			cfg, err := pgxpool.ParseConfig(dsn)
-			if err != nil {
-				return loadedSchemas{err: err}
-			}
-			cfg.ConnConfig.Database = dbName
-			pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
-			if err != nil {
-				return loadedSchemas{err: err}
-			}
-			items, err := pg.ListSchemas(context.Background(), pool)
-			if err != nil {
-				pool.Close()
-				return loadedSchemas{err: err}
-			}
-			return loadedSchemas{items: items, pool: pool}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, pg.ListSchemas)
+			return loadedSchemas{loadID: loadID, db: dbName, items: items, err: err}
 		}
 	case viewSchemas:
+		schemaName := m.schs[m.cursor].Name
 		m.stack = append(m.stack, f)
-		m.curSchema = m.schs[m.cursor].Name
-		cacheKey := m.curDB + "\x00" + m.curSchema
+		m.curSchema = schemaName
+		m.curTable = ""
+		cacheKey := tableCacheKey(m.curDB, schemaName)
 		if tbls, ok := m.tblCache[cacheKey]; ok {
 			m.tbls = tbls
 			m.view = viewTables
-			m.cursor = 0
+			m.cursor = m.firstVisibleOrZero()
 			return nil
 		}
 		m.loading = true
-		pool, sch := m.queryPool(), m.curSchema
+		loadID := m.nextLoadID()
+		dsn, dbName := m.dsn, m.curDB
 		return func() tea.Msg {
-			items, err := pg.ListTables(context.Background(), pool, sch)
-			return loadedTables{items: items, err: err}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+				return pg.ListTables(ctx, pool, schemaName)
+			})
+			return loadedTables{loadID: loadID, db: dbName, schema: schemaName, items: items, err: err}
 		}
 	case viewTables:
+		tableName := m.tbls[m.cursor].Name
 		m.stack = append(m.stack, f)
-		m.curTable = m.tbls[m.cursor].Name
-		cacheKey := m.curDB + "\x00" + m.curSchema + "\x00" + m.curTable
+		m.curTable = tableName
+		cacheKey := relationCacheKey(m.curDB, m.curSchema, tableName)
 		if rels, ok := m.relCache[cacheKey]; ok {
 			m.rels = rels
 			m.view = viewRelations
-			m.cursor = 0
+			m.cursor = m.firstVisibleOrZero()
 			return nil
 		}
 		m.loading = true
-		pool, sch, tbl := m.queryPool(), m.curSchema, m.curTable
+		loadID := m.nextLoadID()
+		dsn, dbName, schemaName := m.dsn, m.curDB, m.curSchema
 		return func() tea.Msg {
-			items, err := pg.ListRelations(context.Background(), pool, sch, tbl)
-			return loadedRelations{items: items, err: err}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
+				return pg.ListRelations(ctx, pool, schemaName, tableName)
+			})
+			return loadedRelations{loadID: loadID, db: dbName, schema: schemaName, table: tableName, items: items, err: err}
 		}
 	}
 	return nil
@@ -396,48 +455,79 @@ func (m *model) drillOut() {
 	}
 	f := m.stack[len(m.stack)-1]
 	m.stack = m.stack[:len(m.stack)-1]
-	if f.view == viewDatabases {
-		m.dbPool = nil
-	}
 	m.view = f.view
 	m.cursor = f.cursor
 	m.curDB = f.curDB
 	m.curSchema = f.curSch
 	m.curTable = f.curTbl
+	m.cursor = m.visibleCursorOrFirst()
 }
 
 func (m *model) reload() tea.Cmd {
+	if m.loading {
+		return nil
+	}
 	m.loading = true
+	loadID := m.nextLoadID()
 	switch m.view {
 	case viewDatabases:
 		pool := m.pool
 		return func() tea.Msg {
 			items, err := pg.ListDatabases(context.Background(), pool)
-			return loadedDatabases{items: items, err: err}
+			return loadedDatabases{loadID: loadID, items: items, err: err}
 		}
 	case viewSchemas:
-		delete(m.schCache, m.curDB)
-		pool := m.queryPool()
+		dbName := m.curDB
+		delete(m.schCache, dbName)
+		dsn := m.dsn
 		return func() tea.Msg {
-			items, err := pg.ListSchemas(context.Background(), pool)
-			return loadedSchemas{items: items, err: err}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, pg.ListSchemas)
+			return loadedSchemas{loadID: loadID, db: dbName, items: items, err: err}
 		}
 	case viewTables:
-		delete(m.tblCache, m.curDB+"\x00"+m.curSchema)
-		pool, sch := m.queryPool(), m.curSchema
+		dbName, schemaName := m.curDB, m.curSchema
+		delete(m.tblCache, tableCacheKey(dbName, schemaName))
+		dsn := m.dsn
 		return func() tea.Msg {
-			items, err := pg.ListTables(context.Background(), pool, sch)
-			return loadedTables{items: items, err: err}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+				return pg.ListTables(ctx, pool, schemaName)
+			})
+			return loadedTables{loadID: loadID, db: dbName, schema: schemaName, items: items, err: err}
 		}
 	case viewRelations:
-		delete(m.relCache, m.curDB+"\x00"+m.curSchema+"\x00"+m.curTable)
-		pool, sch, tbl := m.queryPool(), m.curSchema, m.curTable
+		dbName, schemaName, tableName := m.curDB, m.curSchema, m.curTable
+		delete(m.relCache, relationCacheKey(dbName, schemaName, tableName))
+		dsn := m.dsn
 		return func() tea.Msg {
-			items, err := pg.ListRelations(context.Background(), pool, sch, tbl)
-			return loadedRelations{items: items, err: err}
+			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
+				return pg.ListRelations(ctx, pool, schemaName, tableName)
+			})
+			return loadedRelations{loadID: loadID, db: dbName, schema: schemaName, table: tableName, items: items, err: err}
 		}
 	}
 	return nil
+}
+
+func withDatabasePool[T any](ctx context.Context, dsn, dbName string, fn func(context.Context, *pgxpool.Pool) ([]T, error)) ([]T, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.Database = dbName
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	defer pool.Close()
+	return fn(ctx, pool)
+}
+
+func tableCacheKey(db, schema string) string {
+	return db + "\x00" + schema
+}
+
+func relationCacheKey(db, schema, table string) string {
+	return db + "\x00" + schema + "\x00" + table
 }
 
 func (m *model) applySort() {
@@ -545,21 +635,27 @@ func (m model) renderBody() string {
 	return ""
 }
 
-// pageWindow returns the slice [start, end) of n items to show given the
+// pageWindow returns the slice [start, end) of visible items to show given the
 // cursor position and terminal height. The column-header line and 5 chrome
 // lines (app header, two separators, blank, footer) are subtracted.
-func (m model) pageWindow(n int) (start, end int) {
+func (m model) pageWindow(visible []int) (start, end int) {
 	maxRows := m.height - 6
 	if maxRows < 1 {
 		maxRows = 1
 	}
-	start = 0
-	if m.cursor >= maxRows {
-		start = m.cursor - maxRows + 1
+	cursorPos := 0
+	for i, idx := range visible {
+		if idx == m.cursor {
+			cursorPos = i
+			break
+		}
+	}
+	if cursorPos >= maxRows {
+		start = cursorPos - maxRows + 1
 	}
 	end = start + maxRows
-	if end > n {
-		end = n
+	if end > len(visible) {
+		end = len(visible)
 	}
 	return start, end
 }
@@ -575,16 +671,12 @@ func (m model) renderDatabases() string {
 	} else {
 		sizeHdr += " *"
 	}
-	start, end := m.pageWindow(len(m.dbs))
+	visible := m.visibleIndexes()
+	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
-	shown := 0
-	for i := start; i < end; i++ {
+	for _, i := range visible[start:end] {
 		d := m.dbs[i]
-		if !match(d.Name, m.filterLower) {
-			continue
-		}
-		shown++
 		pct := 0.0
 		if total > 0 {
 			pct = float64(d.SizeBytes) / float64(total) * 100
@@ -601,7 +693,7 @@ func (m model) renderDatabases() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if shown == 0 && m.filterLower != "" {
+	if len(visible) == 0 && m.filterLower != "" {
 		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
@@ -618,17 +710,13 @@ func (m model) renderSchemas() string {
 	} else {
 		sizeHdr += " *"
 	}
-	start, end := m.pageWindow(len(m.schs))
+	visible := m.visibleIndexes()
+	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s\n",
 		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX")
-	shown := 0
-	for i := start; i < end; i++ {
+	for _, i := range visible[start:end] {
 		s := m.schs[i]
-		if !match(s.Name, m.filterLower) {
-			continue
-		}
-		shown++
 		pct := 0.0
 		if total > 0 {
 			pct = float64(s.SizeBytes) / float64(total) * 100
@@ -642,7 +730,7 @@ func (m model) renderSchemas() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if shown == 0 && m.filterLower != "" {
+	if len(visible) == 0 && m.filterLower != "" {
 		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
@@ -663,16 +751,12 @@ func (m model) renderTables() string {
 	if nameW < 1 {
 		nameW = 1
 	}
-	start, end := m.pageWindow(len(m.tbls))
+	visible := m.visibleIndexes()
+	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX")
-	shown := 0
-	for i := start; i < end; i++ {
+	for _, i := range visible[start:end] {
 		t := m.tbls[i]
-		if !match(t.Name, m.filterLower) {
-			continue
-		}
-		shown++
 		pct := 0.0
 		if total > 0 {
 			pct = float64(t.TotalBytes) / float64(total) * 100
@@ -685,7 +769,7 @@ func (m model) renderTables() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if shown == 0 && m.filterLower != "" {
+	if len(visible) == 0 && m.filterLower != "" {
 		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
@@ -696,21 +780,16 @@ func (m model) renderRelations() string {
 	for _, r := range m.rels {
 		total += r.SizeBytes
 	}
-	start, end := m.pageWindow(len(m.rels))
+	visible := m.visibleIndexes()
+	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
 		"SIZE", "%", "", "KIND", "NAME")
 
-	shown := 0
 	indexHeaderShown := false
-	for i := start; i < end; i++ {
+	for _, i := range visible[start:end] {
 		r := m.rels[i]
-		if !match(r.Name, m.filterLower) {
-			continue
-		}
-		shown++
-
-		isIndex := r.Kind != pg.RelHeap && r.Kind != pg.RelToast && r.Kind != pg.RelFsmVm
+		isIndex := r.Kind.IsIndex()
 		if isIndex && !indexHeaderShown {
 			b.WriteString(dimStyle.Render(" --- indexes " + strings.Repeat("-", 60)))
 			b.WriteString("\n")
@@ -734,7 +813,7 @@ func (m model) renderRelations() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if shown == 0 && m.filterLower != "" {
+	if len(visible) == 0 && m.filterLower != "" {
 		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
@@ -749,6 +828,9 @@ func (m model) renderFooter() string {
 		sortLabel = "name"
 	}
 	left := dimStyle.Render(fmt.Sprintf(" [enter] drill  [backspace] up  [s] sort:%s  [/] filter  [r] reload  [q] quit", sortLabel))
+	if m.loading {
+		left = dimStyle.Render(" loading...  [q] quit")
+	}
 	pos, total := m.filteredPos()
 	right := dimStyle.Render(fmt.Sprintf("%d/%d ", pos, total))
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -761,10 +843,27 @@ func (m model) renderFooter() string {
 // helpers
 
 func trunc(s string, n int) string {
-	if len(s) <= n {
+	if n <= 0 {
+		return ""
+	}
+	if lipgloss.Width(s) <= n {
 		return s
 	}
-	return s[:n-1] + "~"
+	if n == 1 {
+		return "~"
+	}
+	var b strings.Builder
+	width := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if width+rw > n-1 {
+			break
+		}
+		b.WriteRune(r)
+		width += rw
+	}
+	b.WriteString("~")
+	return b.String()
 }
 
 func cursor(i, c int) string {

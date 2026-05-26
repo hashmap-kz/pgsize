@@ -33,7 +33,8 @@ type Table struct {
 type RelKind int
 
 const (
-	RelHeap RelKind = iota
+	RelUnknown RelKind = iota
+	RelHeap
 	RelToast
 	RelFsmVm
 	RelBtree
@@ -41,10 +42,13 @@ const (
 	RelGist
 	RelHash
 	RelBrin
+	RelSpgist
 )
 
 func (k RelKind) String() string {
 	switch k {
+	case RelUnknown:
+		return "UNKNOWN"
 	case RelHeap:
 		return "HEAP"
 	case RelToast:
@@ -61,8 +65,19 @@ func (k RelKind) String() string {
 		return "HASH"
 	case RelBrin:
 		return "BRIN"
+	case RelSpgist:
+		return "SPGIST"
 	}
-	return "?"
+	return "UNKNOWN"
+}
+
+func (k RelKind) IsIndex() bool {
+	switch k {
+	case RelBtree, RelGin, RelGist, RelHash, RelBrin, RelSpgist:
+		return true
+	default:
+		return false
+	}
 }
 
 type Relation struct {
@@ -105,9 +120,9 @@ func ListSchemas(ctx context.Context, pool *pgxpool.Pool) ([]Schema, error) {
 	const q = `
 		SELECT
 		    n.nspname,
-		    COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::bigint AS size_bytes,
-		    COUNT(*) FILTER (WHERE c.relkind IN ('r','p'))::int     AS table_count,
-		    COUNT(*) FILTER (WHERE c.relkind = 'i')::int            AS index_count
+		    COALESCE(SUM(pg_total_relation_size(c.oid)) FILTER (WHERE c.relkind IN ('r','p','m')), 0)::bigint AS size_bytes,
+		    COUNT(*) FILTER (WHERE c.relkind IN ('r','p','m'))::int AS table_count,
+		    COUNT(*) FILTER (WHERE c.relkind IN ('i','I'))::int     AS index_count
 		FROM pg_namespace n
 		LEFT JOIN pg_class c ON c.relnamespace = n.oid
 		WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
@@ -256,6 +271,10 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 			r.Kind = RelHash
 		case "BRIN":
 			r.Kind = RelBrin
+		case "SPGIST":
+			r.Kind = RelSpgist
+		default:
+			r.Kind = RelUnknown
 		}
 		out = append(out, r)
 	}

@@ -34,10 +34,10 @@ Or download a binary from the [Releases page](https://github.com/hashmap-kz/pgsi
 
 ```bash
 # Using CLI flags
-pgsize -db "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+pgsize -dsn "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
 
-# Using ENV vars
-PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres \
+# Using PG* env vars / libpq-style defaults
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres \
     pgsize
 ```
 
