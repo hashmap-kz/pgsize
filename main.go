@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"pgsizev0/internal/pg"
-	"pgsizev0/internal/ui"
+	"github.com/hashmap-kz/pgsize/internal/ui"
+
+	"github.com/hashmap-kz/pgsize/internal/pg"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jackc/pgx/v5/pgxpool"

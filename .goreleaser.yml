@@ -1,0 +1,104 @@
+version: 2
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: pgsize
+    binary: pgsize
+    ldflags:
+      - -s -w
+      - -X 'github.com/hashmap-kz/pgsize/internal/version.Version={{.Version}}'
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+checksum:
+  name_template: checksums.txt
+
+archives:
+  - ids:
+      - pgsize
+    name_template: "{{ .ProjectName }}_{{ .Tag }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    wrap_in_directory: "false"
+    formats: [ "tar.gz" ]
+    files:
+      - LICENSE
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^test:"
+      - "^test\\("
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
+  groups:
+    - title: Dependency updates
+      regexp: '^.*?(.+)\(deps\)!?:.+$'
+      order: 300
+    - title: "New Features"
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 100
+    - title: "Security updates"
+      regexp: '^.*?sec(\(.+\))??!?:.+$'
+      order: 150
+    - title: "Bug fixes"
+      regexp: '^.*?(fix|refactor)(\(.+\))??!?:.+$'
+      order: 200
+    - title: "Documentation updates"
+      regexp: ^.*?docs?(\(.+\))??!?:.+$
+      order: 400
+    - title: "Build process updates"
+      regexp: ^.*?(build|ci)(\(.+\))??!?:.+$
+      order: 400
+    - title: Other work
+      order: 9999
+
+nfpms:
+  - file_name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
+    maintainer: alexey.zh
+    homepage: "https://github.com/hashmap-kz/pgsize"
+    description: "ncdu for postgres"
+    license: "MIT"
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+    section: utils
+    contents:
+      - src: ./LICENSE
+        dst: /usr/share/doc/pgsize/copyright
+        file_info:
+          mode: 0644
+
+brews:
+  - name: pgsize
+    repository:
+      owner: hashmap-kz
+      name: homebrew-tap
+      branch: main
+    commit_author:
+      name: alexey.zh
+      email: mailbox.stdio@gmail.com
+    homepage: https://github.com/hashmap-kz/homebrew-tap
+    description: "ncdu for postgres"
+    license: "MIT"
+    install: |
+      bin.install "pgsize"
+    test: |
+      system "#{bin}/pgsize"

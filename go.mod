@@ -1,4 +1,4 @@
-module pgsizev0
+module github.com/hashmap-kz/pgsize
 
 go 1.25.0
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"pgsizev0/internal/pg"
+	"github.com/hashmap-kz/pgsize/internal/pg"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
