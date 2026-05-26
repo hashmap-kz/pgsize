@@ -10,7 +10,7 @@ func TestRelKindString(t *testing.T) {
 		{RelUnknown, "UNKNOWN"},
 		{RelHeap, "HEAP"},
 		{RelToast, "TOAST"},
-		{RelFsmVm, "FSM/VM"},
+		{RelFsmVM, "FSM/VM"},
 		{RelBtree, "BTREE"},
 		{RelGin, "GIN"},
 		{RelGist, "GIST"},
@@ -27,14 +27,23 @@ func TestRelKindString(t *testing.T) {
 }
 
 func TestRelKindIsIndex(t *testing.T) {
-	notIndex := []RelKind{RelHeap, RelToast, RelFsmVm}
+	notIndex := []RelKind{RelHeap, RelToast, RelFsmVM}
 	for _, k := range notIndex {
 		if k.IsIndex() {
 			t.Errorf("RelKind(%d).IsIndex() = true, want false", k)
 		}
 	}
 
-	isIndex := []RelKind{RelBtree, RelGin, RelGist, RelHash, RelBrin, RelSpgist, RelUnknown, RelKind(99)}
+	isIndex := []RelKind{
+		RelBtree,
+		RelGin,
+		RelGist,
+		RelHash,
+		RelBrin,
+		RelSpgist,
+		RelUnknown,
+		RelKind(99),
+	}
 	for _, k := range isIndex {
 		if !k.IsIndex() {
 			t.Errorf("RelKind(%d).IsIndex() = false, want true", k)

@@ -24,6 +24,11 @@ const (
 	viewRelations
 )
 
+const (
+	keyBackspace = "backspace"
+	colSize      = "SIZE"
+)
+
 type sortMode int
 
 const (
@@ -101,8 +106,8 @@ type loadedRelations struct {
 	err    error
 }
 
-func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) model {
-	return model{
+func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) tea.Model {
+	return &model{
 		pool:     pool,
 		dsn:      dsn,
 		view:     viewDatabases,
@@ -207,7 +212,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.err != nil {
 		switch msg.String() {
-		case "backspace", "h", "left":
+		case keyBackspace, "h", "left":
 			m.err = nil
 		}
 		return m, nil
@@ -223,7 +228,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = m.lastVisibleOrZero()
 	case "enter", "l", "right":
 		return m, m.drillIn()
-	case "backspace", "h", "left":
+	case keyBackspace, "h", "left":
 		m.drillOut()
 	case "s":
 		if m.sort == sortSize {
@@ -254,7 +259,7 @@ func (m *model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "enter":
 		m.filterMode = false
-	case "backspace":
+	case keyBackspace:
 		if m.filter != "" {
 			_, size := utf8.DecodeLastRuneInString(m.filter)
 			m.filter = m.filter[:len(m.filter)-size]
@@ -568,6 +573,7 @@ var (
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	cursorStyle = lipgloss.NewStyle().Bold(true)
 	dimStyle    = lipgloss.NewStyle().Faint(true)
+	bloatStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 func (m *model) View() string {
@@ -588,6 +594,37 @@ func (m *model) View() string {
 	return b.String()
 }
 
+func (m *model) curDBSize() uint64 {
+	for _, d := range m.dbs {
+		if d.Name == m.curDB {
+			return d.SizeBytes
+		}
+	}
+	return 0
+}
+
+func (m *model) curSchemaSize() uint64 {
+	for _, s := range m.schs {
+		if s.Name == m.curSchema {
+			return s.SizeBytes
+		}
+	}
+	return 0
+}
+
+func (m *model) curTableSize() uint64 {
+	for _, t := range m.tbls {
+		if t.Name == m.curTable {
+			return t.TotalBytes
+		}
+	}
+	return 0
+}
+
+func breadcrumb(parts ...string) string {
+	return strings.Join(parts, " › ")
+}
+
 func (m *model) renderHeader() string {
 	var left, right string
 	switch m.view {
@@ -603,21 +640,27 @@ func (m *model) renderHeader() string {
 		for _, s := range m.schs {
 			total += s.SizeBytes
 		}
-		left = " pgsize  " + m.curDB
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		left = " pgsize  " + dbPart
 		right = "db: " + humanize(total)
 	case viewTables:
 		var total uint64
 		for _, t := range m.tbls {
 			total += t.TotalBytes
 		}
-		left = fmt.Sprintf(" pgsize  %s  %s", m.curDB, m.curSchema)
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
+		left = " pgsize  " + breadcrumb(dbPart, schPart)
 		right = "schema: " + humanize(total)
 	case viewRelations:
 		var total uint64
 		for _, r := range m.rels {
 			total += r.SizeBytes
 		}
-		left = fmt.Sprintf(" pgsize  %s  %s  %s", m.curDB, m.curSchema, m.curTable)
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
+		tblPart := fmt.Sprintf("T=%s (%s)", m.curTable, humanize(m.curTableSize()))
+		left = " pgsize  " + breadcrumb(dbPart, schPart, tblPart)
 		right = "table: " + humanize(total)
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -674,7 +717,7 @@ func (m *model) renderDatabases() string {
 	for _, d := range m.dbs {
 		total += d.SizeBytes
 	}
-	sizeHdr, nameHdr := "SIZE", "NAME"
+	sizeHdr, nameHdr := colSize, "NAME"
 	if m.sort == sortName {
 		nameHdr += " *"
 	} else {
@@ -713,7 +756,7 @@ func (m *model) renderSchemas() string {
 	for _, s := range m.schs {
 		total += s.SizeBytes
 	}
-	sizeHdr, schemaHdr := "SIZE", "SCHEMA"
+	sizeHdr, schemaHdr := colSize, "SCHEMA"
 	if m.sort == sortName {
 		schemaHdr += " *"
 	} else {
@@ -750,7 +793,7 @@ func (m *model) renderTables() string {
 	for _, t := range m.tbls {
 		total += t.TotalBytes
 	}
-	sizeHdr, tableHdr := "SIZE", "TABLE"
+	sizeHdr, tableHdr := colSize, "TABLE"
 	if m.sort == sortName {
 		tableHdr += " *"
 	} else {
@@ -771,7 +814,7 @@ func (m *model) renderTables() string {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
 		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bar(pct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
+			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -793,7 +836,7 @@ func (m *model) renderRelations() string {
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
-		"SIZE", "%", "", "KIND", "NAME")
+		colSize, "%", "", "KIND", "NAME")
 
 	indexHeaderShown := false
 	for _, i := range visible[start:end] {
@@ -924,4 +967,27 @@ func bar(pct float64, width int) string {
 		filled = 0
 	}
 	return "[" + strings.Repeat("#", filled) + strings.Repeat(" ", width-filled) + "]"
+}
+
+func bloatBar(pct, bloatPct float64, width int) string {
+	filled := int((pct / 100.0) * float64(width))
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	live := int(float64(filled) * (1.0 - bloatPct/100.0))
+	if live < 0 {
+		live = 0
+	}
+	if live > filled {
+		live = filled
+	}
+	bloat := filled - live
+	bloatStr := ""
+	if bloat > 0 {
+		bloatStr = bloatStyle.Render(strings.Repeat("!", bloat))
+	}
+	return "[" + strings.Repeat("#", live) + bloatStr + strings.Repeat(" ", width-filled) + "]"
 }

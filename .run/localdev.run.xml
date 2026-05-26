@@ -1,0 +1,18 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="localdev" type="GoApplicationRunConfiguration" factoryName="Go Application">
+    <module name="pgsize" />
+    <working_directory value="$PROJECT_DIR$" />
+    <envs>
+      <env name="PGHOST" value="localhost" />
+      <env name="PGPORT" value="15432" />
+      <env name="PGUSER" value="postgres" />
+      <env name="PGPASSWORD" value="postgres" />
+    </envs>
+    <kind value="FILE" />
+    <package value="github.com/hashmap-kz/pgsize" />
+    <directory value="$PROJECT_DIR$" />
+    <filePath value="$PROJECT_DIR$/main.go" />
+    <pty_enabled value="true" />
+    <method v="2" />
+  </configuration>
+</component>

@@ -6,6 +6,8 @@ import (
 	"github.com/hashmap-kz/pgsize/internal/pg"
 )
 
+const testZZZ = "zzz"
+
 func TestTrunc(t *testing.T) {
 	cases := []struct {
 		s    string
@@ -115,6 +117,37 @@ func TestHumanizeCount(t *testing.T) {
 	}
 }
 
+func TestBloatBar(t *testing.T) {
+	cases := []struct {
+		pct      float64
+		bloatPct float64
+		width    int
+		want     string
+	}{
+		{100, 0, 4, "[####]"},   // no bloat: identical to bar()
+		{100, 50, 4, "[##!!]"},  // 50% bloat: half live, half dead
+		{100, 100, 4, "[!!!!]"}, // 100% bloat: all dead
+		{50, 0, 4, "[##  ]"},    // no bloat, half full
+		{50, 50, 4, "[#!  ]"},   // half full, half of that is bloat
+		{0, 0, 4, "[    ]"},     // empty table
+		{0, 75, 4, "[    ]"},    // no size, bloat irrelevant
+		{100, 0, 0, "[]"},       // zero width
+		{150, 50, 4, "[##!!]"},  // pct clamped to width
+	}
+	for _, tc := range cases {
+		if got := bloatBar(tc.pct, tc.bloatPct, tc.width); got != tc.want {
+			t.Errorf(
+				"bloatBar(%v, %v, %d) = %q, want %q",
+				tc.pct,
+				tc.bloatPct,
+				tc.width,
+				got,
+				tc.want,
+			)
+		}
+	}
+}
+
 func TestBar(t *testing.T) {
 	cases := []struct {
 		pct   float64
@@ -153,7 +186,13 @@ func TestCacheKeys(t *testing.T) {
 	}
 }
 
-func newTestModel(view viewKind, dbs []pg.Database, schs []pg.Schema, tbls []pg.Table, rels []pg.Relation) model {
+func newTestModel(
+	view viewKind,
+	dbs []pg.Database,
+	schs []pg.Schema,
+	tbls []pg.Table,
+	rels []pg.Relation,
+) model {
 	return model{
 		view:     view,
 		dbs:      dbs,
@@ -230,7 +269,7 @@ func TestModelVisibleIndexes(t *testing.T) {
 	}
 
 	// filter matches nothing
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	if got := m.visibleIndexes(); len(got) != 0 {
 		t.Errorf("visibleIndexes with no-match filter = %v, want []", got)
 	}
@@ -257,7 +296,7 @@ func TestModelFirstLastVisible(t *testing.T) {
 	}
 
 	// no matches: both return 0
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	if got := m.firstVisibleOrZero(); got != 0 {
 		t.Errorf("firstVisibleOrZero no match = %d, want 0", got)
 	}
@@ -309,7 +348,7 @@ func TestModelMoveVisible(t *testing.T) {
 	}
 
 	// empty visible list: stays at 0
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	m.cursor = 0
 	m.moveVisible(1)
 	if m.cursor != 0 {
@@ -385,7 +424,11 @@ func TestModelPageWindow(t *testing.T) {
 
 func TestModelApplySort(t *testing.T) {
 	t.Run("databases by size", func(t *testing.T) {
-		dbs := []pg.Database{{Name: "a", SizeBytes: 100}, {Name: "b", SizeBytes: 300}, {Name: "c", SizeBytes: 200}}
+		dbs := []pg.Database{
+			{Name: "a", SizeBytes: 100},
+			{Name: "b", SizeBytes: 300},
+			{Name: "c", SizeBytes: 200},
+		}
 		m := newTestModel(viewDatabases, dbs, nil, nil, nil)
 		m.sort = sortSize
 		m.applySort()
@@ -435,7 +478,7 @@ func TestModelApplySort(t *testing.T) {
 	})
 
 	t.Run("tables by name", func(t *testing.T) {
-		tbls := []pg.Table{{Name: "zzz"}, {Name: "aaa"}}
+		tbls := []pg.Table{{Name: testZZZ}, {Name: "aaa"}}
 		m := newTestModel(viewTables, nil, nil, tbls, nil)
 		m.sort = sortName
 		m.applySort()

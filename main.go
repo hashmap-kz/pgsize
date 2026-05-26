@@ -17,6 +17,7 @@ import (
 
 var Version = "dev"
 
+//nolint:gosec // false positive: example URL in usage text, not real credentials
 var usage = `pgsize - interactive TUI for exploring PostgreSQL database sizes
 
 Browse databases, schemas, tables, and index sizes in a terminal UI.
@@ -29,6 +30,7 @@ Examples:
   pgsize
   pgsize --dsn "postgres://user:pass@localhost/mydb"
   pgsize --dsn "$DATABASE_URL"
+  PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres pgsize
 
 Keys:
   enter / l / right    drill in
@@ -67,23 +69,24 @@ func main() {
 		fmtx.Fprintf(os.Stderr, "connect: %v\n", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
-
 	if err := pool.Ping(ctx); err != nil {
 		fmtx.Fprintf(os.Stderr, "ping: %v\n", err)
+		pool.Close()
 		os.Exit(1)
 	}
 
 	dbs, err := pg.ListDatabases(ctx, pool)
 	if err != nil {
 		fmtx.Fprintf(os.Stderr, "list databases: %v\n", err)
+		pool.Close()
 		os.Exit(1)
 	}
 
 	app := ui.InitialModel(pool, dbs, *dsn)
-	p := tea.NewProgram(&app, tea.WithAltScreen())
+	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmtx.Fprintf(os.Stderr, "tui: %v\n", err)
+		pool.Close()
 		os.Exit(1)
 	}
 }

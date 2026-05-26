@@ -29,6 +29,7 @@ type Table struct {
 	Name       string
 	TotalBytes uint64
 	RowCount   int64
+	BloatPct   float64
 	Indexes    []Index
 }
 
@@ -38,7 +39,7 @@ const (
 	RelUnknown RelKind = iota
 	RelHeap
 	RelToast
-	RelFsmVm
+	RelFsmVM
 	RelBtree
 	RelGin
 	RelGist
@@ -55,7 +56,7 @@ func (k RelKind) String() string {
 		return "HEAP"
 	case RelToast:
 		return "TOAST"
-	case RelFsmVm:
+	case RelFsmVM:
 		return "FSM/VM"
 	case RelBtree:
 		return "BTREE"
@@ -75,7 +76,7 @@ func (k RelKind) String() string {
 
 func (k RelKind) IsIndex() bool {
 	switch k {
-	case RelHeap, RelToast, RelFsmVm:
+	case RelHeap, RelToast, RelFsmVM:
 		return false
 	default:
 		return true
@@ -112,7 +113,7 @@ func ListDatabases(ctx context.Context, pool *pgxpool.Pool) ([]Database, error) 
 		if err := rows.Scan(&d.Name, &size); err != nil {
 			return nil, err
 		}
-		d.SizeBytes = uint64(size)
+		d.SizeBytes = uint64(size) //nolint:gosec
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -148,9 +149,9 @@ func ListSchemas(ctx context.Context, pool *pgxpool.Pool) ([]Schema, error) {
 		if err := rows.Scan(&s.Name, &size, &s.RowCount, &tcount, &icount); err != nil {
 			return nil, err
 		}
-		s.SizeBytes = uint64(size)
-		s.TableCount = uint32(tcount)
-		s.IndexCount = uint32(icount)
+		s.SizeBytes = uint64(size)    //nolint:gosec
+		s.TableCount = uint32(tcount) //nolint:gosec
+		s.IndexCount = uint32(icount) //nolint:gosec
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -163,10 +164,16 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		    c.relname,
 		    pg_total_relation_size(c.oid)::bigint AS total,
 		    GREATEST(c.reltuples::bigint, 0)      AS row_count,
+		    CASE
+		        WHEN COALESCE(st.n_live_tup + st.n_dead_tup, 0) > 0
+		        THEN 100.0 * st.n_dead_tup::float8 / (st.n_live_tup + st.n_dead_tup)
+		        ELSE 0.0
+		    END                                   AS bloat_pct,
 		    i.relname                             AS idx_name,
 		    pg_relation_size(i.oid)::bigint       AS idx_size
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_stat_user_tables st ON st.schemaname = n.nspname AND st.relname = c.relname
 		LEFT JOIN pg_index x ON x.indrelid = c.oid
 		LEFT JOIN pg_class i ON i.oid = x.indexrelid
 		WHERE c.relkind IN ('r','p')
@@ -185,19 +192,40 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	for rows.Next() {
 		var schName, name string
 		var total, rowCount int64
+		var bloatPct float64
 		var idxName *string
 		var idxSize *int64
-		if err := rows.Scan(&schName, &name, &total, &rowCount, &idxName, &idxSize); err != nil {
+		if err := rows.Scan(
+			&schName,
+			&name,
+			&total,
+			&rowCount,
+			&bloatPct,
+			&idxName,
+			&idxSize,
+		); err != nil {
 			return nil, err
 		}
 		t, ok := tables[name]
 		if !ok {
 			order = append(order, name)
-			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total), RowCount: rowCount}
+			tables[name] = &Table{
+				Schema:     schName,
+				Name:       name,
+				TotalBytes: uint64(total), //nolint:gosec
+				RowCount:   rowCount,
+				BloatPct:   bloatPct,
+			}
 			t = tables[name]
 		}
 		if idxName != nil && idxSize != nil {
-			t.Indexes = append(t.Indexes, Index{Name: *idxName, SizeBytes: uint64(*idxSize)})
+			t.Indexes = append(
+				t.Indexes,
+				Index{
+					Name:      *idxName,
+					SizeBytes: uint64(*idxSize), //nolint:gosec
+				},
+			)
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -211,7 +239,11 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	return out, nil
 }
 
-func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string) ([]Relation, error) {
+func ListRelations(
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	schema, table string,
+) ([]Relation, error) {
 	const q = `
 		WITH t AS (
 		    SELECT c.oid, c.reltoastrelid
@@ -259,7 +291,7 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 		if err := rows.Scan(&r.Name, &kind, &size, &grp); err != nil {
 			return nil, err
 		}
-		r.SizeBytes = uint64(size)
+		r.SizeBytes = uint64(size) //nolint:gosec
 		switch kind {
 		case "HEAP":
 			r.Kind = RelHeap
