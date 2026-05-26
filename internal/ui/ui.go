@@ -722,17 +722,17 @@ func (m *model) renderSchemas() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s\n",
-		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX")
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s\n",
+		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS")
 	for _, i := range visible[start:end] {
 		s := m.schs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(s.SizeBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d",
+		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s",
 			cursor(i, m.cursor), humanize(s.SizeBytes), pct, bar(pct, 32),
-			trunc(s.Name, 30), s.TableCount, s.IndexCount)
+			trunc(s.Name, 30), s.TableCount, s.IndexCount, humanizeCount(s.RowCount))
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -756,22 +756,22 @@ func (m *model) renderTables() string {
 	} else {
 		sizeHdr += " *"
 	}
-	nameW := m.width - 63
+	nameW := min(m.width-73, 40)
 	if nameW < 1 {
 		nameW = 1
 	}
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX")
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s %9s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS")
 	for _, i := range visible[start:end] {
 		t := m.tbls[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %5d",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bar(pct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes))
+		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %5d %9s",
+			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bar(pct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -877,6 +877,27 @@ func match(name, filterLower string) bool {
 		return true
 	}
 	return strings.Contains(strings.ToLower(name), filterLower)
+}
+
+func humanizeCount(n int64) string {
+	if n <= 0 {
+		return "0"
+	}
+	const (
+		K = 1_000
+		M = 1_000_000
+		B = 1_000_000_000
+	)
+	switch {
+	case n >= B:
+		return fmt.Sprintf("~%.1fB", float64(n)/B)
+	case n >= M:
+		return fmt.Sprintf("~%.1fM", float64(n)/M)
+	case n >= K:
+		return fmt.Sprintf("~%.1fK", float64(n)/K)
+	default:
+		return fmt.Sprintf("~%d", n)
+	}
 }
 
 var sizeUnits = []string{"KB", "MB", "GB", "TB", "PB"}
