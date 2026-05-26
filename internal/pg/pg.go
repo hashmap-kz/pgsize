@@ -215,17 +215,17 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 		    JOIN pg_namespace n ON n.oid = c.relnamespace
 		    WHERE n.nspname = $1 AND c.relname = $2
 		)
-		-- heap
+		-- heap: main + FSM/VM, excluding toast so toast row is not double-counted
 		SELECT 'table data'::text AS name,
 		       'HEAP'::text       AS kind,
-		       pg_table_size(t.oid)::bigint AS size,
+		       (pg_table_size(t.oid) - COALESCE(pg_table_size(t.reltoastrelid), 0))::bigint AS size,
 		       0 AS sort_group
 		    FROM t
 		UNION ALL
-		-- toast (only if present)
+		-- toast: toast data only (internal toast btree excluded, matches pg_total_relation_size accounting)
 		SELECT 'toast'::text,
 		       'TOAST'::text,
-		       pg_total_relation_size(t.reltoastrelid)::bigint,
+		       pg_table_size(t.reltoastrelid)::bigint,
 		       1
 		    FROM t WHERE t.reltoastrelid <> 0
 		UNION ALL
