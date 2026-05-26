@@ -2,16 +2,13 @@ package pg
 
 import (
 	"context"
-	"encoding/json"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type Database struct {
-	Name       string
-	SizeBytes  uint64
-	TableCount uint32
-	IndexCount uint32
+	Name      string
+	SizeBytes uint64
 }
 
 type Schema struct {
@@ -36,7 +33,8 @@ type Table struct {
 type RelKind int
 
 const (
-	RelHeap RelKind = iota
+	RelUnknown RelKind = iota
+	RelHeap
 	RelToast
 	RelFsmVm
 	RelBtree
@@ -44,10 +42,13 @@ const (
 	RelGist
 	RelHash
 	RelBrin
+	RelSpgist
 )
 
 func (k RelKind) String() string {
 	switch k {
+	case RelUnknown:
+		return "UNKNOWN"
 	case RelHeap:
 		return "HEAP"
 	case RelToast:
@@ -64,8 +65,19 @@ func (k RelKind) String() string {
 		return "HASH"
 	case RelBrin:
 		return "BRIN"
+	case RelSpgist:
+		return "SPGIST"
 	}
-	return "?"
+	return "UNKNOWN"
+}
+
+func (k RelKind) IsIndex() bool {
+	switch k {
+	case RelHeap, RelToast, RelFsmVm:
+		return false
+	default:
+		return true
+	}
 }
 
 type Relation struct {
@@ -79,7 +91,7 @@ func ListDatabases(ctx context.Context, pool *pgxpool.Pool) ([]Database, error) 
 	const q = `
 		SELECT
 		    d.datname,
-		    pg_database_size(d.datname)::bigint AS size_bytes
+		    pg_database_size(d.oid)::bigint AS size_bytes
 		FROM pg_database d
 		WHERE NOT d.datistemplate
 		  AND has_database_privilege(d.datname, 'CONNECT')
@@ -108,9 +120,9 @@ func ListSchemas(ctx context.Context, pool *pgxpool.Pool) ([]Schema, error) {
 	const q = `
 		SELECT
 		    n.nspname,
-		    COALESCE(SUM(pg_total_relation_size(c.oid)), 0)::bigint AS size_bytes,
-		    COUNT(*) FILTER (WHERE c.relkind IN ('r','p'))::int     AS table_count,
-		    COUNT(*) FILTER (WHERE c.relkind = 'i')::int            AS index_count
+		    COALESCE(SUM(pg_total_relation_size(c.oid)) FILTER (WHERE c.relkind IN ('r','p','m')), 0)::bigint AS size_bytes,
+		    COUNT(*) FILTER (WHERE c.relkind IN ('r','p','m'))::int AS table_count,
+		    COUNT(*) FILTER (WHERE c.relkind IN ('i','I'))::int     AS index_count
 		FROM pg_namespace n
 		LEFT JOIN pg_class c ON c.relnamespace = n.oid
 		WHERE n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
@@ -147,21 +159,15 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		    n.nspname,
 		    c.relname,
 		    pg_total_relation_size(c.oid)::bigint AS total,
-		    COALESCE(
-		        (SELECT json_agg(json_build_object(
-		                    'name', i.relname,
-		                    'size', pg_relation_size(i.oid)::bigint
-		                ) ORDER BY pg_relation_size(i.oid) DESC)
-		         FROM pg_index x
-		         JOIN pg_class i ON i.oid = x.indexrelid
-		         WHERE x.indrelid = c.oid),
-		        '[]'::json
-		    ) AS indexes
+		    i.relname                             AS idx_name,
+		    pg_relation_size(i.oid)::bigint       AS idx_size
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_index x ON x.indrelid = c.oid
+		LEFT JOIN pg_class i ON i.oid = x.indexrelid
 		WHERE c.relkind IN ('r','p')
 		  AND n.nspname = $1
-		ORDER BY total DESC
+		ORDER BY total DESC, c.oid, idx_size DESC NULLS LAST
 	`
 	rows, err := pool.Query(ctx, q, schema)
 	if err != nil {
@@ -169,29 +175,36 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	}
 	defer rows.Close()
 
-	var out []Table
-	for rows.Next() {
-		var t Table
-		var total int64
-		var idxJSON []byte
-		if err := rows.Scan(&t.Schema, &t.Name, &total, &idxJSON); err != nil {
-			return nil, err
-		}
-		t.TotalBytes = uint64(total)
+	var order []string
+	tables := make(map[string]*Table)
 
-		var raw []struct {
-			Name string `json:"name"`
-			Size int64  `json:"size"`
-		}
-		if err := json.Unmarshal(idxJSON, &raw); err != nil {
+	for rows.Next() {
+		var schName, name string
+		var total int64
+		var idxName *string
+		var idxSize *int64
+		if err := rows.Scan(&schName, &name, &total, &idxName, &idxSize); err != nil {
 			return nil, err
 		}
-		for _, r := range raw {
-			t.Indexes = append(t.Indexes, Index{Name: r.Name, SizeBytes: uint64(r.Size)})
+		t, ok := tables[name]
+		if !ok {
+			order = append(order, name)
+			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total)}
+			t = tables[name]
 		}
-		out = append(out, t)
+		if idxName != nil && idxSize != nil {
+			t.Indexes = append(t.Indexes, Index{Name: *idxName, SizeBytes: uint64(*idxSize)})
+		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	out := make([]Table, len(order))
+	for i, name := range order {
+		out[i] = *tables[name]
+	}
+	return out, nil
 }
 
 func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string) ([]Relation, error) {
@@ -202,17 +215,17 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 		    JOIN pg_namespace n ON n.oid = c.relnamespace
 		    WHERE n.nspname = $1 AND c.relname = $2
 		)
-		-- heap
+		-- heap: main + FSM/VM, excluding toast so toast row is not double-counted
 		SELECT 'table data'::text AS name,
 		       'HEAP'::text       AS kind,
-		       pg_relation_size(t.oid)::bigint AS size,
+		       (pg_table_size(t.oid) - COALESCE(pg_table_size(t.reltoastrelid), 0))::bigint AS size,
 		       0 AS sort_group
 		    FROM t
 		UNION ALL
-		-- toast (only if present)
+		-- toast: toast data only (internal toast btree excluded, matches pg_total_relation_size accounting)
 		SELECT 'toast'::text,
 		       'TOAST'::text,
-		       pg_total_relation_size(t.reltoastrelid)::bigint,
+		       pg_table_size(t.reltoastrelid)::bigint,
 		       1
 		    FROM t WHERE t.reltoastrelid <> 0
 		UNION ALL
@@ -258,6 +271,10 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 			r.Kind = RelHash
 		case "BRIN":
 			r.Kind = RelBrin
+		case "SPGIST":
+			r.Kind = RelSpgist
+		default:
+			r.Kind = RelUnknown
 		}
 		out = append(out, r)
 	}

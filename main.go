@@ -15,10 +15,7 @@ import (
 )
 
 func main() {
-	dsn := flag.String("dsn",
-		"postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable",
-		"Postgres connection string (or use PG* env vars)",
-	)
+	dsn := flag.String("dsn", "", "Postgres connection string; if empty, PG* env vars/libpq defaults are used")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -41,7 +38,7 @@ func main() {
 	}
 
 	app := ui.InitialModel(pool, dbs, *dsn)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(&app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
