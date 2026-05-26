@@ -594,6 +594,37 @@ func (m *model) View() string {
 	return b.String()
 }
 
+func (m *model) curDBSize() uint64 {
+	for _, d := range m.dbs {
+		if d.Name == m.curDB {
+			return d.SizeBytes
+		}
+	}
+	return 0
+}
+
+func (m *model) curSchemaSize() uint64 {
+	for _, s := range m.schs {
+		if s.Name == m.curSchema {
+			return s.SizeBytes
+		}
+	}
+	return 0
+}
+
+func (m *model) curTableSize() uint64 {
+	for _, t := range m.tbls {
+		if t.Name == m.curTable {
+			return t.TotalBytes
+		}
+	}
+	return 0
+}
+
+func breadcrumb(parts ...string) string {
+	return strings.Join(parts, " › ")
+}
+
 func (m *model) renderHeader() string {
 	var left, right string
 	switch m.view {
@@ -609,21 +640,27 @@ func (m *model) renderHeader() string {
 		for _, s := range m.schs {
 			total += s.SizeBytes
 		}
-		left = " pgsize  " + m.curDB
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		left = " pgsize  " + dbPart
 		right = "db: " + humanize(total)
 	case viewTables:
 		var total uint64
 		for _, t := range m.tbls {
 			total += t.TotalBytes
 		}
-		left = fmt.Sprintf(" pgsize  %s  %s", m.curDB, m.curSchema)
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
+		left = " pgsize  " + breadcrumb(dbPart, schPart)
 		right = "schema: " + humanize(total)
 	case viewRelations:
 		var total uint64
 		for _, r := range m.rels {
 			total += r.SizeBytes
 		}
-		left = fmt.Sprintf(" pgsize  %s  %s  %s", m.curDB, m.curSchema, m.curTable)
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
+		tblPart := fmt.Sprintf("T=%s (%s)", m.curTable, humanize(m.curTableSize()))
+		left = " pgsize  " + breadcrumb(dbPart, schPart, tblPart)
 		right = "table: " + humanize(total)
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
