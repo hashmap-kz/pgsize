@@ -38,7 +38,7 @@ func main() {
 	}
 
 	app := ui.InitialModel(pool, dbs, *dsn)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(&app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)

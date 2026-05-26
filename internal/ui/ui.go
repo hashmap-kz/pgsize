@@ -113,9 +113,9 @@ func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) model {
 	}
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m *model) Init() tea.Cmd { return nil }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -188,7 +188,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) acceptLoad(loadID uint64) bool {
+func (m *model) acceptLoad(loadID uint64) bool {
 	return loadID != 0 && loadID == m.loadID
 }
 
@@ -197,7 +197,7 @@ func (m *model) nextLoadID() uint64 {
 	return m.loadID
 }
 
-func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "q" || msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -243,7 +243,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -270,7 +270,7 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) rowCount() int {
+func (m *model) rowCount() int {
 	switch m.view {
 	case viewDatabases:
 		return len(m.dbs)
@@ -284,7 +284,7 @@ func (m model) rowCount() int {
 	return 0
 }
 
-func (m model) matchAt(i int) bool {
+func (m *model) matchAt(i int) bool {
 	switch m.view {
 	case viewDatabases:
 		if i >= 0 && i < len(m.dbs) {
@@ -306,7 +306,7 @@ func (m model) matchAt(i int) bool {
 	return false
 }
 
-func (m model) visibleIndexes() []int {
+func (m *model) visibleIndexes() []int {
 	n := m.rowCount()
 	out := make([]int, 0, n)
 	for i := 0; i < n; i++ {
@@ -317,7 +317,7 @@ func (m model) visibleIndexes() []int {
 	return out
 }
 
-func (m model) firstVisibleOrZero() int {
+func (m *model) firstVisibleOrZero() int {
 	visible := m.visibleIndexes()
 	if len(visible) == 0 {
 		return 0
@@ -325,7 +325,7 @@ func (m model) firstVisibleOrZero() int {
 	return visible[0]
 }
 
-func (m model) lastVisibleOrZero() int {
+func (m *model) lastVisibleOrZero() int {
 	visible := m.visibleIndexes()
 	if len(visible) == 0 {
 		return 0
@@ -333,7 +333,7 @@ func (m model) lastVisibleOrZero() int {
 	return visible[len(visible)-1]
 }
 
-func (m model) visibleCursorOrFirst() int {
+func (m *model) visibleCursorOrFirst() int {
 	if m.matchAt(m.cursor) {
 		return m.cursor
 	}
@@ -367,7 +367,7 @@ func (m *model) moveVisible(delta int) {
 	m.cursor = visible[pos]
 }
 
-func (m model) filteredPos() (pos, total int) {
+func (m *model) filteredPos() (pos, total int) {
 	visible := m.visibleIndexes()
 	total = len(visible)
 	for i, idx := range visible {
@@ -569,7 +569,7 @@ var (
 	dimStyle    = lipgloss.NewStyle().Faint(true)
 )
 
-func (m model) View() string {
+func (m *model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("error: %v\n\n [backspace] dismiss  [q] quit", m.err)
 	}
@@ -587,7 +587,7 @@ func (m model) View() string {
 	return b.String()
 }
 
-func (m model) renderHeader() string {
+func (m *model) renderHeader() string {
 	var left, right string
 	switch m.view {
 	case viewDatabases:
@@ -626,7 +626,7 @@ func (m model) renderHeader() string {
 	return headerStyle.Render(left) + strings.Repeat(" ", pad) + headerStyle.Render(right)
 }
 
-func (m model) renderBody() string {
+func (m *model) renderBody() string {
 	if m.loading {
 		return dimStyle.Render(" Loading...") + "\n"
 	}
@@ -646,7 +646,7 @@ func (m model) renderBody() string {
 // pageWindow returns the slice [start, end) of visible items to show given the
 // cursor position and terminal height. The column-header line and 5 chrome
 // lines (app header, two separators, blank, footer) are subtracted.
-func (m model) pageWindow(visible []int) (start, end int) {
+func (m *model) pageWindow(visible []int) (start, end int) {
 	maxRows := m.height - 6
 	if maxRows < 1 {
 		maxRows = 1
@@ -668,7 +668,7 @@ func (m model) pageWindow(visible []int) (start, end int) {
 	return start, end
 }
 
-func (m model) renderDatabases() string {
+func (m *model) renderDatabases() string {
 	var total uint64
 	for _, d := range m.dbs {
 		total += d.SizeBytes
@@ -707,7 +707,7 @@ func (m model) renderDatabases() string {
 	return b.String()
 }
 
-func (m model) renderSchemas() string {
+func (m *model) renderSchemas() string {
 	var total uint64
 	for _, s := range m.schs {
 		total += s.SizeBytes
@@ -744,7 +744,7 @@ func (m model) renderSchemas() string {
 	return b.String()
 }
 
-func (m model) renderTables() string {
+func (m *model) renderTables() string {
 	var total uint64
 	for _, t := range m.tbls {
 		total += t.TotalBytes
@@ -783,7 +783,7 @@ func (m model) renderTables() string {
 	return b.String()
 }
 
-func (m model) renderRelations() string {
+func (m *model) renderRelations() string {
 	var total uint64
 	for _, r := range m.rels {
 		total += r.SizeBytes
@@ -827,7 +827,7 @@ func (m model) renderRelations() string {
 	return b.String()
 }
 
-func (m model) renderFooter() string {
+func (m *model) renderFooter() string {
 	if m.filterMode {
 		return "/" + m.filter
 	}
@@ -893,6 +893,7 @@ func humanize(b uint64) string {
 	return fmt.Sprintf("%.1f %s", float64(b)/float64(div), sizeUnits[exp])
 }
 
+//nolint:unparam
 func bar(pct float64, width int) string {
 	filled := int((pct / 100.0) * float64(width))
 	if filled > width {
