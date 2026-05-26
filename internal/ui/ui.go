@@ -756,7 +756,7 @@ func (m *model) renderTables() string {
 	} else {
 		sizeHdr += " *"
 	}
-	nameW := m.width - 73
+	nameW := min(m.width-73, 40)
 	if nameW < 1 {
 		nameW = 1
 	}
