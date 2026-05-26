@@ -24,6 +24,11 @@ const (
 	viewRelations
 )
 
+const (
+	keyBackspace = "backspace"
+	colSize      = "SIZE"
+)
+
 type sortMode int
 
 const (
@@ -207,7 +212,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.err != nil {
 		switch msg.String() {
-		case "backspace", "h", "left":
+		case keyBackspace, "h", "left":
 			m.err = nil
 		}
 		return m, nil
@@ -223,7 +228,7 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = m.lastVisibleOrZero()
 	case "enter", "l", "right":
 		return m, m.drillIn()
-	case "backspace", "h", "left":
+	case keyBackspace, "h", "left":
 		m.drillOut()
 	case "s":
 		if m.sort == sortSize {
@@ -254,7 +259,7 @@ func (m *model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "enter":
 		m.filterMode = false
-	case "backspace":
+	case keyBackspace:
 		if m.filter != "" {
 			_, size := utf8.DecodeLastRuneInString(m.filter)
 			m.filter = m.filter[:len(m.filter)-size]
@@ -675,7 +680,7 @@ func (m *model) renderDatabases() string {
 	for _, d := range m.dbs {
 		total += d.SizeBytes
 	}
-	sizeHdr, nameHdr := "SIZE", "NAME"
+	sizeHdr, nameHdr := colSize, "NAME"
 	if m.sort == sortName {
 		nameHdr += " *"
 	} else {
@@ -714,7 +719,7 @@ func (m *model) renderSchemas() string {
 	for _, s := range m.schs {
 		total += s.SizeBytes
 	}
-	sizeHdr, schemaHdr := "SIZE", "SCHEMA"
+	sizeHdr, schemaHdr := colSize, "SCHEMA"
 	if m.sort == sortName {
 		schemaHdr += " *"
 	} else {
@@ -751,7 +756,7 @@ func (m *model) renderTables() string {
 	for _, t := range m.tbls {
 		total += t.TotalBytes
 	}
-	sizeHdr, tableHdr := "SIZE", "TABLE"
+	sizeHdr, tableHdr := colSize, "TABLE"
 	if m.sort == sortName {
 		tableHdr += " *"
 	} else {
@@ -794,7 +799,7 @@ func (m *model) renderRelations() string {
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
-		"SIZE", "%", "", "KIND", "NAME")
+		colSize, "%", "", "KIND", "NAME")
 
 	indexHeaderShown := false
 	for _, i := range visible[start:end] {

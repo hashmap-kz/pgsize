@@ -17,6 +17,7 @@ import (
 
 var Version = "dev"
 
+//nolint:gosec // false positive: example URL in usage text, not real credentials
 var usage = `pgsize - interactive TUI for exploring PostgreSQL database sizes
 
 Browse databases, schemas, tables, and index sizes in a terminal UI.
@@ -68,8 +69,6 @@ func main() {
 		fmtx.Fprintf(os.Stderr, "connect: %v\n", err)
 		os.Exit(1)
 	}
-	defer pool.Close()
-
 	if err := pool.Ping(ctx); err != nil {
 		fmtx.Fprintf(os.Stderr, "ping: %v\n", err)
 		pool.Close()

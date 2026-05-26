@@ -6,6 +6,8 @@ import (
 	"github.com/hashmap-kz/pgsize/internal/pg"
 )
 
+const testZZZ = "zzz"
+
 func TestTrunc(t *testing.T) {
 	cases := []struct {
 		s    string
@@ -254,7 +256,7 @@ func TestModelVisibleIndexes(t *testing.T) {
 	}
 
 	// filter matches nothing
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	if got := m.visibleIndexes(); len(got) != 0 {
 		t.Errorf("visibleIndexes with no-match filter = %v, want []", got)
 	}
@@ -281,7 +283,7 @@ func TestModelFirstLastVisible(t *testing.T) {
 	}
 
 	// no matches: both return 0
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	if got := m.firstVisibleOrZero(); got != 0 {
 		t.Errorf("firstVisibleOrZero no match = %d, want 0", got)
 	}
@@ -333,7 +335,7 @@ func TestModelMoveVisible(t *testing.T) {
 	}
 
 	// empty visible list: stays at 0
-	m.filterLower = "zzz"
+	m.filterLower = testZZZ
 	m.cursor = 0
 	m.moveVisible(1)
 	if m.cursor != 0 {
@@ -459,7 +461,7 @@ func TestModelApplySort(t *testing.T) {
 	})
 
 	t.Run("tables by name", func(t *testing.T) {
-		tbls := []pg.Table{{Name: "zzz"}, {Name: "aaa"}}
+		tbls := []pg.Table{{Name: testZZZ}, {Name: "aaa"}}
 		m := newTestModel(viewTables, nil, nil, tbls, nil)
 		m.sort = sortName
 		m.applySort()
