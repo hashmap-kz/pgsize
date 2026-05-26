@@ -568,6 +568,7 @@ var (
 	headerStyle = lipgloss.NewStyle().Bold(true)
 	cursorStyle = lipgloss.NewStyle().Bold(true)
 	dimStyle    = lipgloss.NewStyle().Faint(true)
+	bloatStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
 func (m *model) View() string {
@@ -771,7 +772,7 @@ func (m *model) renderTables() string {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
 		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bar(pct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
+			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -924,4 +925,27 @@ func bar(pct float64, width int) string {
 		filled = 0
 	}
 	return "[" + strings.Repeat("#", filled) + strings.Repeat(" ", width-filled) + "]"
+}
+
+func bloatBar(pct, bloatPct float64, width int) string {
+	filled := int((pct / 100.0) * float64(width))
+	if filled > width {
+		filled = width
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	live := int(float64(filled) * (1.0 - bloatPct/100.0))
+	if live < 0 {
+		live = 0
+	}
+	if live > filled {
+		live = filled
+	}
+	bloat := filled - live
+	bloatStr := ""
+	if bloat > 0 {
+		bloatStr = bloatStyle.Render(strings.Repeat("░", bloat))
+	}
+	return "[" + strings.Repeat("#", live) + bloatStr + strings.Repeat(" ", width-filled) + "]"
 }

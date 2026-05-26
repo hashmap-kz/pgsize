@@ -29,6 +29,7 @@ type Table struct {
 	Name       string
 	TotalBytes uint64
 	RowCount   int64
+	BloatPct   float64
 	Indexes    []Index
 }
 
@@ -163,10 +164,16 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 		    c.relname,
 		    pg_total_relation_size(c.oid)::bigint AS total,
 		    GREATEST(c.reltuples::bigint, 0)      AS row_count,
+		    CASE
+		        WHEN COALESCE(st.n_live_tup + st.n_dead_tup, 0) > 0
+		        THEN 100.0 * st.n_dead_tup::float8 / (st.n_live_tup + st.n_dead_tup)
+		        ELSE 0.0
+		    END                                   AS bloat_pct,
 		    i.relname                             AS idx_name,
 		    pg_relation_size(i.oid)::bigint       AS idx_size
 		FROM pg_class c
 		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_stat_user_tables st ON st.schemaname = n.nspname AND st.relname = c.relname
 		LEFT JOIN pg_index x ON x.indrelid = c.oid
 		LEFT JOIN pg_class i ON i.oid = x.indexrelid
 		WHERE c.relkind IN ('r','p')
@@ -185,15 +192,16 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	for rows.Next() {
 		var schName, name string
 		var total, rowCount int64
+		var bloatPct float64
 		var idxName *string
 		var idxSize *int64
-		if err := rows.Scan(&schName, &name, &total, &rowCount, &idxName, &idxSize); err != nil {
+		if err := rows.Scan(&schName, &name, &total, &rowCount, &bloatPct, &idxName, &idxSize); err != nil {
 			return nil, err
 		}
 		t, ok := tables[name]
 		if !ok {
 			order = append(order, name)
-			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total), RowCount: rowCount}
+			tables[name] = &Table{Schema: schName, Name: name, TotalBytes: uint64(total), RowCount: rowCount, BloatPct: bloatPct}
 			t = tables[name]
 		}
 		if idxName != nil && idxSize != nil {
