@@ -73,10 +73,10 @@ func (k RelKind) String() string {
 
 func (k RelKind) IsIndex() bool {
 	switch k {
-	case RelBtree, RelGin, RelGist, RelHash, RelBrin, RelSpgist:
-		return true
-	default:
+	case RelHeap, RelToast, RelFsmVm:
 		return false
+	default:
+		return true
 	}
 }
 
@@ -218,7 +218,7 @@ func ListRelations(ctx context.Context, pool *pgxpool.Pool, schema, table string
 		-- heap
 		SELECT 'table data'::text AS name,
 		       'HEAP'::text       AS kind,
-		       pg_relation_size(t.oid)::bigint AS size,
+		       pg_table_size(t.oid)::bigint AS size,
 		       0 AS sort_group
 		    FROM t
 		UNION ALL

@@ -244,7 +244,7 @@ func (m model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "q" || msg.String() == "ctrl+c" {
+	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
 	if m.loading {
@@ -255,10 +255,8 @@ func (m model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filterMode = false
 	case "backspace":
 		if m.filter != "" {
-			r, size := utf8.DecodeLastRuneInString(m.filter)
-			if r != utf8.RuneError || size > 0 {
-				m.filter = m.filter[:len(m.filter)-size]
-			}
+			_, size := utf8.DecodeLastRuneInString(m.filter)
+			m.filter = m.filter[:len(m.filter)-size]
 			m.filterLower = strings.ToLower(m.filter)
 			m.cursor = m.firstVisibleOrZero()
 		}
@@ -348,12 +346,16 @@ func (m *model) moveVisible(delta int) {
 		m.cursor = 0
 		return
 	}
-	pos := 0
+	pos := -1
 	for i, idx := range visible {
 		if idx == m.cursor {
 			pos = i
 			break
 		}
+	}
+	if pos == -1 {
+		m.cursor = visible[0]
+		return
 	}
 	pos += delta
 	if pos < 0 {
@@ -384,6 +386,9 @@ func (m *model) drillIn() tea.Cmd {
 		view: m.view, cursor: m.cursor,
 		curDB: m.curDB, curSch: m.curSchema, curTbl: m.curTable,
 	}
+	m.filter = ""
+	m.filterLower = ""
+	m.filterMode = false
 	switch m.view {
 	case viewDatabases:
 		dbName := m.dbs[m.cursor].Name
@@ -460,6 +465,9 @@ func (m *model) drillOut() {
 	m.curDB = f.curDB
 	m.curSchema = f.curSch
 	m.curTable = f.curTbl
+	m.filter = ""
+	m.filterLower = ""
+	m.filterMode = false
 	m.cursor = m.visibleCursorOrFirst()
 }
 
@@ -846,24 +854,14 @@ func trunc(s string, n int) string {
 	if n <= 0 {
 		return ""
 	}
-	if lipgloss.Width(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
 	if n == 1 {
 		return "~"
 	}
-	var b strings.Builder
-	width := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if width+rw > n-1 {
-			break
-		}
-		b.WriteRune(r)
-		width += rw
-	}
-	b.WriteString("~")
-	return b.String()
+	return string(runes[:n-1]) + "~"
 }
 
 func cursor(i, c int) string {
