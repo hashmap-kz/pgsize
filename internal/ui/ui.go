@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/hashmap-kz/pgsize/internal/pg"
+	"github.com/hashmap-kz/pgsize/internal/x/fmtx"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -682,7 +683,7 @@ func (m *model) renderDatabases() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmt.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
 	for _, i := range visible[start:end] {
 		d := m.dbs[i]
 		pct := 0.0
@@ -721,7 +722,7 @@ func (m *model) renderSchemas() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s\n",
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s\n",
 		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX")
 	for _, i := range visible[start:end] {
 		s := m.schs[i]
@@ -762,7 +763,7 @@ func (m *model) renderTables() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX")
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX")
 	for _, i := range visible[start:end] {
 		t := m.tbls[i]
 		pct := 0.0
@@ -791,7 +792,7 @@ func (m *model) renderRelations() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmt.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
 		"SIZE", "%", "", "KIND", "NAME")
 
 	indexHeaderShown := false

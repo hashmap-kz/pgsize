@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/hashmap-kz/pgsize/internal/ui"
+	"github.com/hashmap-kz/pgsize/internal/x/fmtx"
 
 	"github.com/hashmap-kz/pgsize/internal/pg"
 
@@ -49,9 +50,9 @@ func main() {
 	showVer := flag.Bool("version", false, "print version and exit")
 
 	flag.Usage = func() {
-		fmt.Fprint(os.Stderr, usage)
+		fmtx.Fprint(os.Stderr, usage)
 		flag.PrintDefaults()
-		fmt.Fprintln(os.Stderr)
+		fmtx.Fprintln(os.Stderr)
 	}
 	flag.Parse()
 
@@ -63,26 +64,26 @@ func main() {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, *dsn)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "connect: %v\n", err)
+		fmtx.Fprintf(os.Stderr, "connect: %v\n", err)
 		os.Exit(1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "ping: %v\n", err)
+		fmtx.Fprintf(os.Stderr, "ping: %v\n", err)
 		os.Exit(1)
 	}
 
 	dbs, err := pg.ListDatabases(ctx, pool)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "list databases: %v\n", err)
+		fmtx.Fprintf(os.Stderr, "list databases: %v\n", err)
 		os.Exit(1)
 	}
 
 	app := ui.InitialModel(pool, dbs, *dsn)
 	p := tea.NewProgram(&app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		fmtx.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
 	}
 }
