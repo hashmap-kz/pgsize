@@ -41,7 +41,18 @@ Or download a binary from the [Releases page](https://github.com/hashmap-kz/pgsi
 ## Usage
 
 ```bash
+# Using CLI flags
 pgsize -dsn "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+pgsize -dsn "host=localhost port=5432 user=postgres password=$mypasswd"
+
+# Using PG* env vars / libpq-style defaults
+PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres \
+    pgsize
+    
+# Connect to multiple clusters
+pgsize \
+  --dsn "postgres://user:pass@dev:5432/db" \
+  --dsn "postgres://user:pass@stage:5432/db"
 ```
 
 ---

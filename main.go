@@ -29,6 +29,7 @@ Usage:
 Examples:
   pgsize
   pgsize --dsn "postgres://user:pass@host:port/db"
+  pgsize --dsn "host=localhost port=5432 user=postgres password=$mypasswd"
   pgsize --dsn "postgres://user:pass@dev:5432/db" --dsn "postgres://user:pass@stage:5432/db"
   PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres pgsize
 
