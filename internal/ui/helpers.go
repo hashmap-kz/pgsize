@@ -6,6 +6,21 @@ import (
 	"strings"
 )
 
+const commentW = 80
+
+func normalizeComment(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func anyHasComment[T any](items []T, comment func(T) string) bool {
+	for _, item := range items {
+		if comment(item) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func trunc(s string, n int) string {
 	if n <= 0 {
 		return ""

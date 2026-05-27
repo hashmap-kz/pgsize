@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashmap-kz/pgsize/internal/pg"
 	"github.com/hashmap-kz/pgsize/internal/x/fmtx"
 
 	"github.com/charmbracelet/lipgloss"
@@ -214,28 +215,53 @@ func (m *model) renderDatabases() string {
 	} else {
 		sizeHdr += " *"
 	}
+
+	hasComments := anyHasComment(m.dbs, func(d pg.Database) string { return d.DatabaseComment })
+
 	n := len(m.dbs)
 	start, end := m.pageWindow(n)
+
+	nameW := m.width - 57
+	if hasComments {
+		nameW -= commentW + 2
+	}
+	if nameW < 1 {
+		nameW = 1
+	}
+
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s %s\n", sizeHdr, "%", "", nameHdr, "COMMENT")
+	if hasComments {
+		fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s  %-*s\n", sizeHdr, "%", "", nameW, nameHdr, commentW, "COMMENT")
+	} else {
+		fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
+	}
 	for i := start; i < end; i++ {
 		d := m.dbs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(d.SizeBytes) / float64(total) * 100
 		}
-		nameW := m.width - 57
-		if nameW < 1 {
-			nameW = 1
+		var row string
+		if hasComments {
+			row = fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s  %-*s",
+				cursor(i, m.cursor),
+				humanize(d.SizeBytes),
+				pct,
+				bar(pct, 32),
+				nameW,
+				trunc(d.Name, nameW),
+				commentW,
+				trunc(normalizeComment(d.DatabaseComment), commentW),
+			)
+		} else {
+			row = fmt.Sprintf(" %1s %10s %5.1f  %s  %s",
+				cursor(i, m.cursor),
+				humanize(d.SizeBytes),
+				pct,
+				bar(pct, 32),
+				trunc(d.Name, nameW),
+			)
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %s  %9s",
-			cursor(i, m.cursor),
-			humanize(d.SizeBytes),
-			pct,
-			bar(pct, 32),
-			trunc(d.Name, nameW),
-			d.DatabaseComment,
-		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -256,36 +282,51 @@ func (m *model) renderSchemas() string {
 	} else {
 		sizeHdr += " *"
 	}
+
+	hasComments := anyHasComment(m.schs, func(s pg.Schema) string { return s.SchemaComment })
+
 	n := len(m.schs)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s %9s\n",
-		sizeHdr,
-		"%",
-		"",
-		schemaHdr,
-		"TABLES",
-		"IDX",
-		"ROWS",
-		"COMMENT",
-	)
+	if hasComments {
+		fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s  %-*s\n",
+			sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS", commentW, "COMMENT")
+	} else {
+		fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s\n",
+			sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS")
+	}
 	for i := start; i < end; i++ {
 		s := m.schs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(s.SizeBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s %9s",
-			cursor(i, m.cursor),
-			humanize(s.SizeBytes),
-			pct,
-			bar(pct, 32),
-			trunc(s.Name, 30),
-			s.TableCount,
-			s.IndexCount,
-			humanizeCount(s.RowCount),
-			s.SchemaComment,
-		)
+		var row string
+		if hasComments {
+			row = fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s  %-*s",
+				cursor(i, m.cursor),
+				humanize(s.SizeBytes),
+				pct,
+				bar(pct, 32),
+				trunc(s.Name, 30),
+				s.TableCount,
+				s.IndexCount,
+				humanizeCount(s.RowCount),
+				commentW,
+				trunc(normalizeComment(s.SchemaComment), commentW),
+			)
+		} else {
+			row = fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s",
+				cursor(i, m.cursor),
+				humanize(s.SizeBytes),
+				pct,
+				bar(pct, 32),
+				trunc(s.Name, 30),
+				s.TableCount,
+				s.IndexCount,
+				humanizeCount(s.RowCount),
+			)
+		}
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -306,43 +347,66 @@ func (m *model) renderTables() string {
 	} else {
 		sizeHdr += " *"
 	}
+
+	hasComments := anyHasComment(m.tbls, func(t pg.Table) string { return t.TableComment })
+
 	nameW := min(m.width-73, 40)
+	if hasComments {
+		nameW = min(m.width-73-commentW-2, 40)
+	}
 	if nameW < 1 {
 		nameW = 1
 	}
 	n := len(m.tbls)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(
-		&b,
-		"   %-10s %5s  %-34s %-*s %5s %9s %9s\n",
-		sizeHdr,
-		"%",
-		"",
-		nameW,
-		tableHdr,
-		"IDX",
-		"ROWS",
-		"COMMENT",
-	)
+	if hasComments {
+		fmtx.Fprintf(
+			&b,
+			"   %-10s %5s  %-34s %-*s %5s %9s  %-*s\n",
+			sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS", commentW, "COMMENT",
+		)
+	} else {
+		fmtx.Fprintf(
+			&b,
+			"   %-10s %5s  %-34s %-*s %5s %9s\n",
+			sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS",
+		)
+	}
 	for i := start; i < end; i++ {
 		t := m.tbls[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(
-			" %1s %10s %5.1f  %s  %-*s %5d %9s %9s",
-			cursor(i, m.cursor),
-			humanize(t.TotalBytes),
-			pct,
-			bloatBar(pct, t.BloatPct, 32),
-			nameW,
-			trunc(t.Name, nameW),
-			len(t.Indexes),
-			humanizeCount(t.RowCount),
-			t.TableComment,
-		)
+		var row string
+		if hasComments {
+			row = fmt.Sprintf(
+				" %1s %10s %5.1f  %s  %-*s %5d %9s  %-*s",
+				cursor(i, m.cursor),
+				humanize(t.TotalBytes),
+				pct,
+				bloatBar(pct, t.BloatPct, 32),
+				nameW,
+				trunc(t.Name, nameW),
+				len(t.Indexes),
+				humanizeCount(t.RowCount),
+				commentW,
+				trunc(normalizeComment(t.TableComment), commentW),
+			)
+		} else {
+			row = fmt.Sprintf(
+				" %1s %10s %5.1f  %s  %-*s %5d %9s",
+				cursor(i, m.cursor),
+				humanize(t.TotalBytes),
+				pct,
+				bloatBar(pct, t.BloatPct, 32),
+				nameW,
+				trunc(t.Name, nameW),
+				len(t.Indexes),
+				humanizeCount(t.RowCount),
+			)
+		}
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
