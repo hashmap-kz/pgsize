@@ -550,6 +550,13 @@ var (
 	bloatStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 )
 
+func DisableStyles() {
+	headerStyle = lipgloss.NewStyle()
+	cursorStyle = lipgloss.NewStyle()
+	dimStyle = lipgloss.NewStyle()
+	bloatStyle = lipgloss.NewStyle()
+}
+
 func (m *model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("error: %v\n\n [backspace] dismiss  [q] quit", m.err)

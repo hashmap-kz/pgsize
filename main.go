@@ -15,6 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func isNoColor() bool {
+	_, set := os.LookupEnv("NO_COLOR")
+	return set
+}
+
 var Version = "dev"
 
 //nolint:gosec // false positive: example URL in usage text, not real credentials
@@ -40,7 +45,6 @@ Keys:
   g / home             jump to top
   G / end              jump to bottom
   s                    toggle sort (size / name)
-  /                    filter
   r                    reload
   q / ctrl+c           quit
 
@@ -50,6 +54,7 @@ Flags:
 func main() {
 	dsn := flag.String("dsn", "", "Postgres connection string; if empty, PG* env vars/libpq defaults are used")
 	showVer := flag.Bool("version", false, "print version and exit")
+	noColor := flag.Bool("no-color", false, "disable colors and text styles (also honoured via NO_COLOR env var)")
 
 	flag.Usage = func() {
 		fmtx.Fprint(os.Stderr, usage)
@@ -61,6 +66,10 @@ func main() {
 	if *showVer {
 		fmt.Printf("%s\n", Version)
 		os.Exit(0)
+	}
+
+	if *noColor || isNoColor() {
+		ui.DisableStyles()
 	}
 
 	ctx := context.Background()
