@@ -15,11 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func isNoColor() bool {
-	_, set := os.LookupEnv("NO_COLOR")
-	return set
-}
-
 var Version = "dev"
 
 //nolint:gosec // false positive: example URL in usage text, not real credentials
@@ -51,6 +46,11 @@ Keys:
 Flags:
 `
 
+type runOpts struct {
+	dsn     string
+	noColor bool
+}
+
 func main() {
 	dsn := flag.String("dsn", "", "Postgres connection string; if empty, PG* env vars/libpq defaults are used")
 	showVer := flag.Bool("version", false, "print version and exit")
@@ -68,34 +68,46 @@ func main() {
 		os.Exit(0)
 	}
 
-	if *noColor || isNoColor() {
+	opts := &runOpts{
+		dsn:     *dsn,
+		noColor: *noColor || isNoColor(),
+	}
+	if err := run(opts); err != nil {
+		fmtx.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(o *runOpts) error {
+	if o.noColor {
 		ui.DisableStyles()
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, *dsn)
+	pool, err := pgxpool.New(ctx, o.dsn)
 	if err != nil {
-		fmtx.Fprintf(os.Stderr, "connect: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("connect: %w", err)
 	}
+	defer pool.Close()
+
 	if err := pool.Ping(ctx); err != nil {
-		fmtx.Fprintf(os.Stderr, "ping: %v\n", err)
-		pool.Close()
-		os.Exit(1)
+		return fmt.Errorf("ping: %w", err)
 	}
 
 	dbs, err := pg.ListDatabases(ctx, pool)
 	if err != nil {
-		fmtx.Fprintf(os.Stderr, "list databases: %v\n", err)
-		pool.Close()
-		os.Exit(1)
+		return fmt.Errorf("list databases: %w", err)
 	}
 
-	app := ui.InitialModel(pool, dbs, *dsn)
+	app := ui.InitialModel(pool, dbs, o.dsn)
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
-		fmtx.Fprintf(os.Stderr, "tui: %v\n", err)
-		pool.Close()
-		os.Exit(1)
+		return fmt.Errorf("tui: %w", err)
 	}
+	return nil
+}
+
+func isNoColor() bool {
+	_, set := os.LookupEnv("NO_COLOR")
+	return set
 }
