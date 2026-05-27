@@ -92,6 +92,7 @@ type Relation struct {
 	Kind      RelKind
 	SizeBytes uint64
 	BloatPct  float64
+	Comment   string
 }
 
 // r = ordinary table
@@ -286,21 +287,24 @@ func ListRelations(
 		SELECT 'table data'::text AS name,
 		       'HEAP'::text       AS kind,
 		       (pg_table_size(t.oid) - COALESCE(pg_table_size(t.reltoastrelid), 0))::bigint AS size,
-		       0 AS sort_group
+		       0 AS sort_group,
+		       ''::text AS comment
 		    FROM t
 		UNION ALL
 		-- toast: toast data only (internal toast btree excluded, matches pg_total_relation_size accounting)
 		SELECT 'toast'::text,
 		       'TOAST'::text,
 		       pg_table_size(t.reltoastrelid)::bigint,
-		       1
+		       1,
+		       ''::text
 		    FROM t WHERE t.reltoastrelid <> 0
 		UNION ALL
 		-- user indexes only (exclude toast indexes)
 		SELECT i.relname,
 		       UPPER(am.amname),
 		       pg_relation_size(i.oid)::bigint,
-		       2
+		       2,
+		       coalesce(obj_description(i.oid, 'pg_class'), '')
 		    FROM t
 		    JOIN pg_index x ON x.indrelid = t.oid
 		    JOIN pg_class i ON i.oid = x.indexrelid
@@ -319,7 +323,7 @@ func ListRelations(
 		var kind string
 		var size int64
 		var grp int
-		if err := rows.Scan(&r.Name, &kind, &size, &grp); err != nil {
+		if err := rows.Scan(&r.Name, &kind, &size, &grp, &r.Comment); err != nil {
 			return nil, err
 		}
 		r.SizeBytes = uint64(size) //nolint:gosec

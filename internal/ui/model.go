@@ -15,6 +15,7 @@ const (
 	viewSchemas
 	viewTables
 	viewRelations
+	viewDescribe
 )
 
 const (
@@ -61,6 +62,9 @@ type model struct {
 	curDB     string
 	curSchema string
 	curTable  string
+
+	describeTitle   string
+	describeComment string
 
 	loading bool
 	loadID  uint64
