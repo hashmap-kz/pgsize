@@ -120,8 +120,44 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cursor = 0
 	case "r":
 		return m, m.reload()
+	case "d":
+		if m.view == viewClusters || m.view == viewDescribe {
+			break
+		}
+		title, comment := m.currentItemComment()
+		f := frame{view: m.view, cursor: m.cursor, curDB: m.curDB, curSch: m.curSchema, curTbl: m.curTable}
+		m.stack = append(m.stack, f)
+		m.describeTitle = title
+		m.describeComment = comment
+		m.view = viewDescribe
 	}
 	return m, nil
+}
+
+func (m *model) currentItemComment() (title, comment string) {
+	switch m.view {
+	case viewDatabases:
+		if m.cursor < len(m.dbs) {
+			d := m.dbs[m.cursor]
+			return d.Name, d.DatabaseComment
+		}
+	case viewSchemas:
+		if m.cursor < len(m.schs) {
+			s := m.schs[m.cursor]
+			return s.Name, s.SchemaComment
+		}
+	case viewTables:
+		if m.cursor < len(m.tbls) {
+			t := m.tbls[m.cursor]
+			return t.Name, t.TableComment
+		}
+	case viewRelations:
+		if m.cursor < len(m.rels) {
+			r := m.rels[m.cursor]
+			return r.Name, r.Comment
+		}
+	}
+	return "", ""
 }
 
 func (m *model) rowCount() int {
@@ -136,6 +172,8 @@ func (m *model) rowCount() int {
 		return len(m.tbls)
 	case viewRelations:
 		return len(m.rels)
+	case viewDescribe:
+		return 0
 	}
 	return 0
 }
@@ -189,5 +227,6 @@ func (m *model) applySort() {
 		)
 	case viewClusters: // clusters are ordered by the user's --dsn arguments
 	case viewRelations: // relations within a table have no meaningful size-based order
+	case viewDescribe: // describe is a read-only text view
 	}
 }

@@ -6,6 +6,35 @@ import (
 	"strings"
 )
 
+func wordWrap(s string, width int) []string {
+	if width < 1 {
+		return []string{s}
+	}
+	var lines []string
+	for _, raw := range strings.Split(s, "\n") {
+		words := strings.Fields(raw)
+		if len(words) == 0 {
+			lines = append(lines, "")
+			continue
+		}
+		var cur strings.Builder
+		for _, w := range words {
+			if cur.Len() > 0 && cur.Len()+1+len(w) > width {
+				lines = append(lines, cur.String())
+				cur.Reset()
+			}
+			if cur.Len() > 0 {
+				cur.WriteByte(' ')
+			}
+			cur.WriteString(w)
+		}
+		if cur.Len() > 0 {
+			lines = append(lines, cur.String())
+		}
+	}
+	return lines
+}
+
 func trunc(s string, n int) string {
 	if n <= 0 {
 		return ""

@@ -142,6 +142,9 @@ func (m *model) renderHeader() string {
 		}
 		left = " pgsize  " + breadcrumb(parts...)
 		right = "table: " + humanize(total)
+	case viewDescribe:
+		left = " pgsize  " + m.describeTitle
+		right = "description"
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
@@ -165,6 +168,8 @@ func (m *model) renderBody() string {
 		return m.renderTables()
 	case viewRelations:
 		return m.renderRelations()
+	case viewDescribe:
+		return m.renderDescribe()
 	}
 	return ""
 }
@@ -216,6 +221,10 @@ func (m *model) renderDatabases() string {
 	}
 	n := len(m.dbs)
 	start, end := m.pageWindow(n)
+	nameW := m.width - 57
+	if nameW < 1 {
+		nameW = 1
+	}
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
 	for i := start; i < end; i++ {
@@ -223,10 +232,6 @@ func (m *model) renderDatabases() string {
 		pct := 0.0
 		if total > 0 {
 			pct = float64(d.SizeBytes) / float64(total) * 100
-		}
-		nameW := m.width - 57
-		if nameW < 1 {
-			nameW = 1
 		}
 		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %s",
 			cursor(i, m.cursor), humanize(d.SizeBytes), pct, bar(pct, 32), trunc(d.Name, nameW))
@@ -284,6 +289,7 @@ func (m *model) renderTables() string {
 	} else {
 		sizeHdr += " *"
 	}
+
 	nameW := min(m.width-73, 40)
 	if nameW < 1 {
 		nameW = 1
@@ -358,17 +364,38 @@ func (m *model) renderRelations() string {
 	return b.String()
 }
 
+func (m *model) renderDescribe() string {
+	text := m.describeComment
+	if text == "" {
+		text = "(no description)"
+	}
+	textW := m.width - 4
+	if textW < 1 {
+		textW = 1
+	}
+	var b strings.Builder
+	for _, line := range wordWrap(text, textW) {
+		b.WriteString("  ")
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (m *model) renderFooter() string {
 	var hintStr string
-	if m.view == viewClusters {
+	switch m.view {
+	case viewClusters:
 		hintStr = " [enter] select  [j/k] move  [q] quit"
-	} else {
+	case viewDescribe:
+		hintStr = " [backspace] back  [q] quit"
+	default:
 		sortLabel := "size"
 		if m.sort == sortName {
 			sortLabel = "name"
 		}
 		hintStr = fmt.Sprintf(
-			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
+			" [enter] drill  [backspace] up  [d] describe  [s] sort:%s  [r] reload  [q] quit",
 			sortLabel,
 		)
 	}
