@@ -386,7 +386,14 @@ func (m *model) drillIn() tea.Cmd {
 					return pg.ListTables(ctx, pool, schemaName)
 				},
 			)
-			return loadedTables{loadID: loadID, clusterIdx: ci, db: dbName, schema: schemaName, items: items, err: err}
+			return loadedTables{
+				loadID:     loadID,
+				clusterIdx: ci,
+				db:         dbName,
+				schema:     schemaName,
+				items:      items,
+				err:        err,
+			}
 		}
 	case viewTables:
 		tableName := m.tbls[m.cursor].Name
@@ -416,6 +423,7 @@ func (m *model) drillIn() tea.Cmd {
 				items: items, err: err,
 			}
 		}
+	case viewRelations: // deepest level - nothing to drill into
 	}
 	return nil
 }
@@ -468,7 +476,14 @@ func (m *model) reload() tea.Cmd {
 					return pg.ListTables(ctx, pool, schemaName)
 				},
 			)
-			return loadedTables{loadID: loadID, clusterIdx: ci, db: dbName, schema: schemaName, items: items, err: err}
+			return loadedTables{
+				loadID:     loadID,
+				clusterIdx: ci,
+				db:         dbName,
+				schema:     schemaName,
+				items:      items,
+				err:        err,
+			}
 		}
 	case viewRelations:
 		dbName, schemaName, tableName := m.curDB, m.curSchema, m.curTable
@@ -487,6 +502,7 @@ func (m *model) reload() tea.Cmd {
 				items: items, err: err,
 			}
 		}
+	case viewClusters: // clusters are static connections - nothing to reload
 	}
 	return nil
 }
@@ -576,6 +592,8 @@ func (m *model) applySort() {
 			func(t pg.Table) string { return t.Name },
 			bySize,
 		)
+	case viewClusters: // clusters are ordered by the user's --dsn arguments
+	case viewRelations: // relations within a table have no meaningful size-based order
 	}
 }
 
@@ -939,7 +957,10 @@ func (m *model) renderFooter() string {
 		if m.sort == sortName {
 			sortLabel = "name"
 		}
-		hintStr = fmt.Sprintf(" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit", sortLabel)
+		hintStr = fmt.Sprintf(
+			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
+			sortLabel,
+		)
 	}
 	left := dimStyle.Render(hintStr)
 	if m.loading {
