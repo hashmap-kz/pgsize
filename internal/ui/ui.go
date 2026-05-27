@@ -724,7 +724,7 @@ func (m *model) renderDatabases() string {
 	for _, d := range m.dbs {
 		total += d.SizeBytes
 	}
-	sizeHdr, nameHdr := colSize, "NAME"
+	sizeHdr, nameHdr := colSize, "DATABASE"
 	if m.sort == sortName {
 		nameHdr += " *"
 	} else {
