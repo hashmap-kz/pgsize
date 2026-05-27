@@ -217,7 +217,7 @@ func (m *model) renderDatabases() string {
 	n := len(m.dbs)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s %s\n", sizeHdr, "%", "", nameHdr, "COMMENT")
 	for i := start; i < end; i++ {
 		d := m.dbs[i]
 		pct := 0.0
@@ -228,8 +228,14 @@ func (m *model) renderDatabases() string {
 		if nameW < 1 {
 			nameW = 1
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %s",
-			cursor(i, m.cursor), humanize(d.SizeBytes), pct, bar(pct, 32), trunc(d.Name, nameW))
+		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %s  %9s",
+			cursor(i, m.cursor),
+			humanize(d.SizeBytes),
+			pct,
+			bar(pct, 32),
+			trunc(d.Name, nameW),
+			d.DatabaseComment,
+		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -253,17 +259,33 @@ func (m *model) renderSchemas() string {
 	n := len(m.schs)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s\n",
-		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS")
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s %9s\n",
+		sizeHdr,
+		"%",
+		"",
+		schemaHdr,
+		"TABLES",
+		"IDX",
+		"ROWS",
+		"COMMENT",
+	)
 	for i := start; i < end; i++ {
 		s := m.schs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(s.SizeBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s",
-			cursor(i, m.cursor), humanize(s.SizeBytes), pct, bar(pct, 32),
-			trunc(s.Name, 30), s.TableCount, s.IndexCount, humanizeCount(s.RowCount))
+		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s %9s",
+			cursor(i, m.cursor),
+			humanize(s.SizeBytes),
+			pct,
+			bar(pct, 32),
+			trunc(s.Name, 30),
+			s.TableCount,
+			s.IndexCount,
+			humanizeCount(s.RowCount),
+			s.SchemaComment,
+		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -293,8 +315,15 @@ func (m *model) renderTables() string {
 	var b strings.Builder
 	fmtx.Fprintf(
 		&b,
-		"   %-10s %5s  %-34s %-*s %5s %9s\n",
-		sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS",
+		"   %-10s %5s  %-34s %-*s %5s %9s %9s\n",
+		sizeHdr,
+		"%",
+		"",
+		nameW,
+		tableHdr,
+		"IDX",
+		"ROWS",
+		"COMMENT",
 	)
 	for i := start; i < end; i++ {
 		t := m.tbls[i]
@@ -303,10 +332,16 @@ func (m *model) renderTables() string {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
 		row := fmt.Sprintf(
-			" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct,
-			bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW),
-			len(t.Indexes), humanizeCount(t.RowCount),
+			" %1s %10s %5.1f  %s  %-*s %5d %9s %9s",
+			cursor(i, m.cursor),
+			humanize(t.TotalBytes),
+			pct,
+			bloatBar(pct, t.BloatPct, 32),
+			nameW,
+			trunc(t.Name, nameW),
+			len(t.Indexes),
+			humanizeCount(t.RowCount),
+			t.TableComment,
 		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)

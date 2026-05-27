@@ -4,7 +4,7 @@
     <working_directory value="$PROJECT_DIR$" />
     <envs>
       <env name="PGHOST" value="localhost" />
-      <env name="PGPORT" value="15432" />
+      <env name="PGPORT" value="5432" />
       <env name="PGUSER" value="postgres" />
       <env name="PGPASSWORD" value="postgres" />
     </envs>
