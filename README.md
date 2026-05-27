@@ -9,7 +9,7 @@ Fast size viewer for PostgreSQL cluster (ncdu for pg).
 [![Go Version](https://img.shields.io/github/go-mod/go-version/hashmap-kz/pgsize)](https://github.com/hashmap-kz/pgsize/blob/master/go.mod#L3)
 [![Latest Release](https://img.shields.io/github/v/release/hashmap-kz/pgsize)](https://github.com/hashmap-kz/pgsize/releases/latest)
 
-![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/pgsize/pgsize-4.gif)
+![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/pgsize/pgsize-5.gif)
 
 ---
 
@@ -43,10 +43,16 @@ Or download a binary from the [Releases page](https://github.com/hashmap-kz/pgsi
 ```bash
 # Using CLI flags
 pgsize -dsn "postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+pgsize -dsn "host=localhost port=5432 user=postgres password=$mypasswd"
 
 # Using PG* env vars / libpq-style defaults
 PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres PGDATABASE=postgres \
     pgsize
+    
+# Connect to multiple clusters
+pgsize \
+  --dsn "postgres://user:pass@dev:5432/db" \
+  --dsn "postgres://user:pass@stage:5432/db"
 ```
 
 ---

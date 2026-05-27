@@ -172,14 +172,16 @@ func newTestModel(
 	rels []pg.Relation,
 ) model {
 	return model{
-		view:     view,
-		dbs:      dbs,
-		schs:     schs,
-		tbls:     tbls,
-		rels:     rels,
-		schCache: make(map[string][]pg.Schema),
-		tblCache: make(map[string][]pg.Table),
-		relCache: make(map[string][]pg.Relation),
+		view: view,
+		dbs:  dbs,
+		schs: schs,
+		tbls: tbls,
+		rels: rels,
+		clusters: []clusterState{{
+			schCache: make(map[string][]pg.Schema),
+			tblCache: make(map[string][]pg.Table),
+			relCache: make(map[string][]pg.Relation),
+		}},
 	}
 }
 
