@@ -1,6 +1,6 @@
 # pgsize
 
-Fast size viewer for PostgreSQL cluster (ncdu for pg).
+Fast size viewer for PostgreSQL clusters (ncdu for pg).
 
 [![License](https://img.shields.io/github/license/hashmap-kz/pgsize)](https://github.com/hashmap-kz/pgsize/blob/master/LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/hashmap-kz/pgsize)](https://goreportcard.com/report/github.com/hashmap-kz/pgsize)
