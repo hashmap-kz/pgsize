@@ -27,6 +27,7 @@ const (
 const (
 	keyBackspace = "backspace"
 	colSize      = "SIZE"
+	nilByte      = "\x00"
 )
 
 type sortMode int
@@ -492,7 +493,7 @@ func (m *model) reload() tea.Cmd {
 		}
 	case viewSchemas:
 		dbName := m.curDB
-		delete(m.schCache, dbName)
+		m.invalidateDB(dbName)
 		dsn := m.dsn
 		return func() tea.Msg {
 			items, err := withDatabasePool(context.Background(), dsn, dbName, pg.ListSchemas)
@@ -500,7 +501,7 @@ func (m *model) reload() tea.Cmd {
 		}
 	case viewTables:
 		dbName, schemaName := m.curDB, m.curSchema
-		delete(m.tblCache, tableCacheKey(dbName, schemaName))
+		m.invalidateSchema(dbName, schemaName)
 		dsn := m.dsn
 		return func() tea.Msg {
 			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
@@ -537,33 +538,55 @@ func withDatabasePool[T any](ctx context.Context, dsn, dbName string, fn func(co
 }
 
 func tableCacheKey(db, schema string) string {
-	return db + "\x00" + schema
+	return db + nilByte + schema
 }
 
 func relationCacheKey(db, schema, table string) string {
-	return db + "\x00" + schema + "\x00" + table
+	return db + nilByte + schema + nilByte + table
+}
+
+func (m *model) invalidateDB(db string) {
+	delete(m.schCache, db)
+	prefix := db + nilByte
+	for k := range m.tblCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.tblCache, k)
+		}
+	}
+	for k := range m.relCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.relCache, k)
+		}
+	}
+}
+
+func (m *model) invalidateSchema(db, schema string) {
+	delete(m.tblCache, tableCacheKey(db, schema))
+	prefix := db + nilByte + schema + nilByte
+	for k := range m.relCache {
+		if strings.HasPrefix(k, prefix) {
+			delete(m.relCache, k)
+		}
+	}
+}
+
+func sortBySizeOrName[T any](s []T, size func(T) uint64, name func(T) string, bySize bool) {
+	if bySize {
+		sort.Slice(s, func(i, j int) bool { return size(s[i]) > size(s[j]) })
+	} else {
+		sort.Slice(s, func(i, j int) bool { return name(s[i]) < name(s[j]) })
+	}
 }
 
 func (m *model) applySort() {
+	bySize := m.sort == sortSize
 	switch m.view {
 	case viewDatabases:
-		if m.sort == sortSize {
-			sort.Slice(m.dbs, func(i, j int) bool { return m.dbs[i].SizeBytes > m.dbs[j].SizeBytes })
-		} else {
-			sort.Slice(m.dbs, func(i, j int) bool { return m.dbs[i].Name < m.dbs[j].Name })
-		}
+		sortBySizeOrName(m.dbs, func(d pg.Database) uint64 { return d.SizeBytes }, func(d pg.Database) string { return d.Name }, bySize)
 	case viewSchemas:
-		if m.sort == sortSize {
-			sort.Slice(m.schs, func(i, j int) bool { return m.schs[i].SizeBytes > m.schs[j].SizeBytes })
-		} else {
-			sort.Slice(m.schs, func(i, j int) bool { return m.schs[i].Name < m.schs[j].Name })
-		}
+		sortBySizeOrName(m.schs, func(s pg.Schema) uint64 { return s.SizeBytes }, func(s pg.Schema) string { return s.Name }, bySize)
 	case viewTables:
-		if m.sort == sortSize {
-			sort.Slice(m.tbls, func(i, j int) bool { return m.tbls[i].TotalBytes > m.tbls[j].TotalBytes })
-		} else {
-			sort.Slice(m.tbls, func(i, j int) bool { return m.tbls[i].Name < m.tbls[j].Name })
-		}
+		sortBySizeOrName(m.tbls, func(t pg.Table) uint64 { return t.TotalBytes }, func(t pg.Table) string { return t.Name }, bySize)
 	}
 }
 
