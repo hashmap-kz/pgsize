@@ -178,7 +178,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case loadedRelations:
-		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema || msg.table != m.curTable {
+		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema ||
+			msg.table != m.curTable {
 			return m, nil
 		}
 		m.loading = false
@@ -432,10 +433,21 @@ func (m *model) drillIn() tea.Cmd {
 		loadID := m.nextLoadID()
 		dsn, dbName := m.dsn, m.curDB
 		return func() tea.Msg {
-			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
-				return pg.ListTables(ctx, pool, schemaName)
-			})
-			return loadedTables{loadID: loadID, db: dbName, schema: schemaName, items: items, err: err}
+			items, err := withDatabasePool(
+				context.Background(),
+				dsn,
+				dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+					return pg.ListTables(ctx, pool, schemaName)
+				},
+			)
+			return loadedTables{
+				loadID: loadID,
+				db:     dbName,
+				schema: schemaName,
+				items:  items,
+				err:    err,
+			}
 		}
 	case viewTables:
 		tableName := m.tbls[m.cursor].Name
@@ -452,10 +464,22 @@ func (m *model) drillIn() tea.Cmd {
 		loadID := m.nextLoadID()
 		dsn, dbName, schemaName := m.dsn, m.curDB, m.curSchema
 		return func() tea.Msg {
-			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
-				return pg.ListRelations(ctx, pool, schemaName, tableName)
-			})
-			return loadedRelations{loadID: loadID, db: dbName, schema: schemaName, table: tableName, items: items, err: err}
+			items, err := withDatabasePool(
+				context.Background(),
+				dsn,
+				dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
+					return pg.ListRelations(ctx, pool, schemaName, tableName)
+				},
+			)
+			return loadedRelations{
+				loadID: loadID,
+				db:     dbName,
+				schema: schemaName,
+				table:  tableName,
+				items:  items,
+				err:    err,
+			}
 		}
 	}
 	return nil
@@ -504,26 +528,53 @@ func (m *model) reload() tea.Cmd {
 		m.invalidateSchema(dbName, schemaName)
 		dsn := m.dsn
 		return func() tea.Msg {
-			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
-				return pg.ListTables(ctx, pool, schemaName)
-			})
-			return loadedTables{loadID: loadID, db: dbName, schema: schemaName, items: items, err: err}
+			items, err := withDatabasePool(
+				context.Background(),
+				dsn,
+				dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+					return pg.ListTables(ctx, pool, schemaName)
+				},
+			)
+			return loadedTables{
+				loadID: loadID,
+				db:     dbName,
+				schema: schemaName,
+				items:  items,
+				err:    err,
+			}
 		}
 	case viewRelations:
 		dbName, schemaName, tableName := m.curDB, m.curSchema, m.curTable
 		delete(m.relCache, relationCacheKey(dbName, schemaName, tableName))
 		dsn := m.dsn
 		return func() tea.Msg {
-			items, err := withDatabasePool(context.Background(), dsn, dbName, func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
-				return pg.ListRelations(ctx, pool, schemaName, tableName)
-			})
-			return loadedRelations{loadID: loadID, db: dbName, schema: schemaName, table: tableName, items: items, err: err}
+			items, err := withDatabasePool(
+				context.Background(),
+				dsn,
+				dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
+					return pg.ListRelations(ctx, pool, schemaName, tableName)
+				},
+			)
+			return loadedRelations{
+				loadID: loadID,
+				db:     dbName,
+				schema: schemaName,
+				table:  tableName,
+				items:  items,
+				err:    err,
+			}
 		}
 	}
 	return nil
 }
 
-func withDatabasePool[T any](ctx context.Context, dsn, dbName string, fn func(context.Context, *pgxpool.Pool) ([]T, error)) ([]T, error) {
+func withDatabasePool[T any](
+	ctx context.Context,
+	dsn, dbName string,
+	fn func(context.Context, *pgxpool.Pool) ([]T, error),
+) ([]T, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, err
@@ -582,11 +633,26 @@ func (m *model) applySort() {
 	bySize := m.sort == sortSize
 	switch m.view {
 	case viewDatabases:
-		sortBySizeOrName(m.dbs, func(d pg.Database) uint64 { return d.SizeBytes }, func(d pg.Database) string { return d.Name }, bySize)
+		sortBySizeOrName(
+			m.dbs,
+			func(d pg.Database) uint64 { return d.SizeBytes },
+			func(d pg.Database) string { return d.Name },
+			bySize,
+		)
 	case viewSchemas:
-		sortBySizeOrName(m.schs, func(s pg.Schema) uint64 { return s.SizeBytes }, func(s pg.Schema) string { return s.Name }, bySize)
+		sortBySizeOrName(
+			m.schs,
+			func(s pg.Schema) uint64 { return s.SizeBytes },
+			func(s pg.Schema) string { return s.Name },
+			bySize,
+		)
 	case viewTables:
-		sortBySizeOrName(m.tbls, func(t pg.Table) uint64 { return t.TotalBytes }, func(t pg.Table) string { return t.Name }, bySize)
+		sortBySizeOrName(
+			m.tbls,
+			func(t pg.Table) uint64 { return t.TotalBytes },
+			func(t pg.Table) string { return t.Name },
+			bySize,
+		)
 	}
 }
 
@@ -836,15 +902,37 @@ func (m *model) renderTables() string {
 	visible := m.visibleIndexes()
 	start, end := m.pageWindow(visible)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s %5s %9s\n", sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS")
+	fmtx.Fprintf(
+		&b,
+		"   %-10s %5s  %-34s %-*s %5s %9s\n",
+		sizeHdr,
+		"%",
+		"",
+		nameW,
+		tableHdr,
+		"IDX",
+		"ROWS",
+	)
 	for _, i := range visible[start:end] {
 		t := m.tbls[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct, bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW), len(t.Indexes), humanizeCount(t.RowCount))
+		row := fmt.Sprintf(
+			" %1s %10s %5.1f  %s  %-*s %5d %9s",
+			cursor(
+				i,
+				m.cursor,
+			),
+			humanize(t.TotalBytes),
+			pct,
+			bloatBar(pct, t.BloatPct, 32),
+			nameW,
+			trunc(t.Name, nameW),
+			len(t.Indexes),
+			humanizeCount(t.RowCount),
+		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -909,7 +997,12 @@ func (m *model) renderFooter() string {
 	if m.sort == sortName {
 		sortLabel = "name"
 	}
-	left := dimStyle.Render(fmt.Sprintf(" [enter] drill  [backspace] up  [s] sort:%s  [/] filter  [r] reload  [q] quit", sortLabel))
+	left := dimStyle.Render(
+		fmt.Sprintf(
+			" [enter] drill  [backspace] up  [s] sort:%s  [/] filter  [r] reload  [q] quit",
+			sortLabel,
+		),
+	)
 	if m.loading {
 		left = dimStyle.Render(" loading...  [q] quit")
 	}
