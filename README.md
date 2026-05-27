@@ -9,7 +9,7 @@ Fast size viewer for PostgreSQL cluster (ncdu for pg).
 [![Go Version](https://img.shields.io/github/go-mod/go-version/hashmap-kz/pgsize)](https://github.com/hashmap-kz/pgsize/blob/master/go.mod#L3)
 [![Latest Release](https://img.shields.io/github/v/release/hashmap-kz/pgsize)](https://github.com/hashmap-kz/pgsize/releases/latest)
 
-![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/pgsize/pgsize-4.gif)
+![Preview](https://raw.githubusercontent.com/hashmap-kz/assets/main/pgsize/pgsize-5.gif)
 
 ---
 
