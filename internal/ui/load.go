@@ -255,3 +255,25 @@ func (m *model) invalidateSchema(db, schema string) {
 		}
 	}
 }
+
+func (m *model) initLoad() tea.Cmd {
+	if len(m.clusters) == 1 {
+		m.loading = true
+		loadID := m.nextLoadID()
+		pool := m.clusters[0].Pool
+		return func() tea.Msg {
+			items, err := pg.ListDatabases(context.Background(), pool)
+			return loadedDatabases{loadID: loadID, clusterIdx: 0, items: items, err: err}
+		}
+	}
+	return nil
+}
+
+func (m *model) acceptLoad(loadID uint64) bool {
+	return loadID != 0 && loadID == m.loadID
+}
+
+func (m *model) nextLoadID() uint64 {
+	m.loadID++
+	return m.loadID
+}

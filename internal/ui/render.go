@@ -23,7 +23,7 @@ func DisableStyles() {
 	bloatStyle = lipgloss.NewStyle()
 }
 
-func (m *model) View() string {
+func (m *model) renderView() string {
 	if m.err != nil {
 		return fmt.Sprintf("error: %v\n\n [backspace] dismiss  [q] quit", m.err)
 	}
