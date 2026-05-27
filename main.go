@@ -60,8 +60,16 @@ type runOpts struct {
 func main() {
 	var dsns multiFlag
 	showVer := flag.Bool("version", false, "print version and exit")
-	noColor := flag.Bool("no-color", false, "disable colors and text styles (also honoured via NO_COLOR env var)")
-	flag.Var(&dsns, "dsn", "Postgres connection string (may be repeated for multiple clusters; if omitted, libpq env vars are used)")
+	noColor := flag.Bool(
+		"no-color",
+		false,
+		"disable colors and text styles (also honoured via NO_COLOR env var)",
+	)
+	flag.Var(
+		&dsns,
+		"dsn",
+		"Postgres connection string (may be repeated for multiple clusters; if omitted, libpq env vars are used)",
+	)
 
 	flag.Usage = func() {
 		fmtx.Fprint(os.Stderr, usage)
