@@ -72,6 +72,8 @@ type model struct {
 	err    error
 }
 
+var _ tea.Model = &model{}
+
 type frame struct {
 	view   viewKind
 	cursor int
