@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/hashmap-kz/pgsize/internal/pg"
 	"github.com/hashmap-kz/pgsize/internal/x/fmtx"
@@ -49,10 +48,6 @@ type model struct {
 	stack  []frame
 	cursor int
 	sort   sortMode
-
-	filter      string
-	filterLower string
-	filterMode  bool
 
 	curDB     string
 	curSchema string
@@ -129,9 +124,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.filterMode {
-			return m.updateFilter(msg)
-		}
 		return m.updateKey(msg)
 
 	case loadedDatabases:
@@ -144,7 +136,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.dbs = msg.items
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 		return m, nil
 
 	case loadedSchemas:
@@ -159,7 +151,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.schs = msg.items
 		m.schCache[msg.db] = msg.items
 		m.view = viewSchemas
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 		return m, nil
 
 	case loadedTables:
@@ -174,7 +166,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tbls = msg.items
 		m.tblCache[tableCacheKey(msg.db, msg.schema)] = msg.items
 		m.view = viewTables
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 		return m, nil
 
 	case loadedRelations:
@@ -190,7 +182,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rels = msg.items
 		m.relCache[relationCacheKey(msg.db, msg.schema, msg.table)] = msg.items
 		m.view = viewRelations
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 		return m, nil
 	}
 	return m, nil
@@ -221,13 +213,16 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "j", "down":
-		m.moveVisible(1)
+		m.moveBy(1)
 	case "k", "up":
-		m.moveVisible(-1)
+		m.moveBy(-1)
 	case "g", "home":
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 	case "G", "end":
-		m.cursor = m.lastVisibleOrZero()
+		n := m.rowCount()
+		if n > 0 {
+			m.cursor = n - 1
+		}
 	case "enter", "l", "right":
 		return m, m.drillIn()
 	case keyBackspace, "h", "left":
@@ -239,41 +234,9 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sort = sortSize
 		}
 		m.applySort()
-		m.cursor = m.firstVisibleOrZero()
+		m.cursor = 0
 	case "r":
 		return m, m.reload()
-	case "/":
-		m.filterMode = true
-		m.filter = ""
-		m.filterLower = ""
-		m.cursor = m.firstVisibleOrZero()
-	}
-	return m, nil
-}
-
-func (m *model) updateFilter(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
-		return m, tea.Quit
-	}
-	if m.loading {
-		return m, nil
-	}
-	switch msg.String() {
-	case "esc", "enter":
-		m.filterMode = false
-	case keyBackspace:
-		if m.filter != "" {
-			_, size := utf8.DecodeLastRuneInString(m.filter)
-			m.filter = m.filter[:len(m.filter)-size]
-			m.filterLower = strings.ToLower(m.filter)
-			m.cursor = m.firstVisibleOrZero()
-		}
-	default:
-		if s := msg.String(); utf8.RuneCountInString(s) == 1 {
-			m.filter += s
-			m.filterLower = strings.ToLower(m.filter)
-			m.cursor = m.firstVisibleOrZero()
-		}
 	}
 	return m, nil
 }
@@ -292,111 +255,37 @@ func (m *model) rowCount() int {
 	return 0
 }
 
-func (m *model) matchAt(i int) bool {
-	switch m.view {
-	case viewDatabases:
-		if i >= 0 && i < len(m.dbs) {
-			return match(m.dbs[i].Name, m.filterLower)
-		}
-	case viewSchemas:
-		if i >= 0 && i < len(m.schs) {
-			return match(m.schs[i].Name, m.filterLower)
-		}
-	case viewTables:
-		if i >= 0 && i < len(m.tbls) {
-			return match(m.tbls[i].Name, m.filterLower)
-		}
-	case viewRelations:
-		if i >= 0 && i < len(m.rels) {
-			return match(m.rels[i].Name, m.filterLower)
-		}
-	}
-	return false
-}
-
-func (m *model) visibleIndexes() []int {
+func (m *model) moveBy(delta int) {
 	n := m.rowCount()
-	out := make([]int, 0, n)
-	for i := 0; i < n; i++ {
-		if m.matchAt(i) {
-			out = append(out, i)
-		}
-	}
-	return out
-}
-
-func (m *model) firstVisibleOrZero() int {
-	visible := m.visibleIndexes()
-	if len(visible) == 0 {
-		return 0
-	}
-	return visible[0]
-}
-
-func (m *model) lastVisibleOrZero() int {
-	visible := m.visibleIndexes()
-	if len(visible) == 0 {
-		return 0
-	}
-	return visible[len(visible)-1]
-}
-
-func (m *model) visibleCursorOrFirst() int {
-	if m.matchAt(m.cursor) {
-		return m.cursor
-	}
-	return m.firstVisibleOrZero()
-}
-
-func (m *model) moveVisible(delta int) {
-	visible := m.visibleIndexes()
-	if len(visible) == 0 {
+	if n == 0 {
 		m.cursor = 0
 		return
 	}
-	pos := -1
-	for i, idx := range visible {
-		if idx == m.cursor {
-			pos = i
-			break
-		}
+	m.cursor += delta
+	if m.cursor < 0 {
+		m.cursor = 0
 	}
-	if pos == -1 {
-		m.cursor = visible[0]
-		return
+	if m.cursor >= n {
+		m.cursor = n - 1
 	}
-	pos += delta
-	if pos < 0 {
-		pos = 0
-	}
-	if pos >= len(visible) {
-		pos = len(visible) - 1
-	}
-	m.cursor = visible[pos]
 }
 
-func (m *model) filteredPos() (pos, total int) {
-	visible := m.visibleIndexes()
-	total = len(visible)
-	for i, idx := range visible {
-		if idx == m.cursor {
-			return i + 1, total
-		}
+func (m *model) cursorPos() (pos, total int) {
+	total = m.rowCount()
+	if total > 0 {
+		pos = m.cursor + 1
 	}
-	return 0, total
+	return pos, total
 }
 
 func (m *model) drillIn() tea.Cmd {
-	if m.rowCount() == 0 || !m.matchAt(m.cursor) {
+	if m.rowCount() == 0 {
 		return nil
 	}
 	f := frame{
 		view: m.view, cursor: m.cursor,
 		curDB: m.curDB, curSch: m.curSchema, curTbl: m.curTable,
 	}
-	m.filter = ""
-	m.filterLower = ""
-	m.filterMode = false
 	switch m.view {
 	case viewDatabases:
 		dbName := m.dbs[m.cursor].Name
@@ -407,7 +296,7 @@ func (m *model) drillIn() tea.Cmd {
 		if schs, ok := m.schCache[dbName]; ok {
 			m.schs = schs
 			m.view = viewSchemas
-			m.cursor = m.firstVisibleOrZero()
+			m.cursor = 0
 			return nil
 		}
 		m.loading = true
@@ -426,7 +315,7 @@ func (m *model) drillIn() tea.Cmd {
 		if tbls, ok := m.tblCache[cacheKey]; ok {
 			m.tbls = tbls
 			m.view = viewTables
-			m.cursor = m.firstVisibleOrZero()
+			m.cursor = 0
 			return nil
 		}
 		m.loading = true
@@ -457,7 +346,7 @@ func (m *model) drillIn() tea.Cmd {
 		if rels, ok := m.relCache[cacheKey]; ok {
 			m.rels = rels
 			m.view = viewRelations
-			m.cursor = m.firstVisibleOrZero()
+			m.cursor = 0
 			return nil
 		}
 		m.loading = true
@@ -496,10 +385,6 @@ func (m *model) drillOut() {
 	m.curDB = f.curDB
 	m.curSchema = f.curSch
 	m.curTable = f.curTbl
-	m.filter = ""
-	m.filterLower = ""
-	m.filterMode = false
-	m.cursor = m.visibleCursorOrFirst()
 }
 
 func (m *model) reload() tea.Cmd {
@@ -783,27 +668,20 @@ func (m *model) renderBody() string {
 	return ""
 }
 
-// pageWindow returns the slice [start, end) of visible items to show given the
-// cursor position and terminal height. The column-header line and 5 chrome
-// lines (app header, two separators, blank, footer) are subtracted.
-func (m *model) pageWindow(visible []int) (start, end int) {
+// pageWindow returns the [start, end) row range to display given the cursor
+// position and terminal height. The column-header line and 5 chrome lines
+// (app header, two separators, blank, footer) are subtracted.
+func (m *model) pageWindow(n int) (start, end int) {
 	maxRows := m.height - 6
 	if maxRows < 1 {
 		maxRows = 1
 	}
-	cursorPos := 0
-	for i, idx := range visible {
-		if idx == m.cursor {
-			cursorPos = i
-			break
-		}
-	}
-	if cursorPos >= maxRows {
-		start = cursorPos - maxRows + 1
+	if m.cursor >= maxRows {
+		start = m.cursor - maxRows + 1
 	}
 	end = start + maxRows
-	if end > len(visible) {
-		end = len(visible)
+	if end > n {
+		end = n
 	}
 	return start, end
 }
@@ -819,11 +697,11 @@ func (m *model) renderDatabases() string {
 	} else {
 		sizeHdr += " *"
 	}
-	visible := m.visibleIndexes()
-	start, end := m.pageWindow(visible)
+	n := len(m.dbs)
+	start, end := m.pageWindow(n)
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
-	for _, i := range visible[start:end] {
+	for i := start; i < end; i++ {
 		d := m.dbs[i]
 		pct := 0.0
 		if total > 0 {
@@ -841,9 +719,6 @@ func (m *model) renderDatabases() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if len(visible) == 0 && m.filterLower != "" {
-		b.WriteString(dimStyle.Render("  no matches") + "\n")
-	}
 	return b.String()
 }
 
@@ -858,12 +733,12 @@ func (m *model) renderSchemas() string {
 	} else {
 		sizeHdr += " *"
 	}
-	visible := m.visibleIndexes()
-	start, end := m.pageWindow(visible)
+	n := len(m.schs)
+	start, end := m.pageWindow(n)
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s\n",
 		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS")
-	for _, i := range visible[start:end] {
+	for i := start; i < end; i++ {
 		s := m.schs[i]
 		pct := 0.0
 		if total > 0 {
@@ -877,9 +752,6 @@ func (m *model) renderSchemas() string {
 		}
 		b.WriteString(row)
 		b.WriteString("\n")
-	}
-	if len(visible) == 0 && m.filterLower != "" {
-		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
 }
@@ -899,21 +771,15 @@ func (m *model) renderTables() string {
 	if nameW < 1 {
 		nameW = 1
 	}
-	visible := m.visibleIndexes()
-	start, end := m.pageWindow(visible)
+	n := len(m.tbls)
+	start, end := m.pageWindow(n)
 	var b strings.Builder
 	fmtx.Fprintf(
 		&b,
 		"   %-10s %5s  %-34s %-*s %5s %9s\n",
-		sizeHdr,
-		"%",
-		"",
-		nameW,
-		tableHdr,
-		"IDX",
-		"ROWS",
+		sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS",
 	)
-	for _, i := range visible[start:end] {
+	for i := start; i < end; i++ {
 		t := m.tbls[i]
 		pct := 0.0
 		if total > 0 {
@@ -921,26 +787,15 @@ func (m *model) renderTables() string {
 		}
 		row := fmt.Sprintf(
 			" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(
-				i,
-				m.cursor,
-			),
-			humanize(t.TotalBytes),
-			pct,
-			bloatBar(pct, t.BloatPct, 32),
-			nameW,
-			trunc(t.Name, nameW),
-			len(t.Indexes),
-			humanizeCount(t.RowCount),
+			cursor(i, m.cursor), humanize(t.TotalBytes), pct,
+			bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW),
+			len(t.Indexes), humanizeCount(t.RowCount),
 		)
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
 		b.WriteString(row)
 		b.WriteString("\n")
-	}
-	if len(visible) == 0 && m.filterLower != "" {
-		b.WriteString(dimStyle.Render("  no matches") + "\n")
 	}
 	return b.String()
 }
@@ -950,14 +805,14 @@ func (m *model) renderRelations() string {
 	for _, r := range m.rels {
 		total += r.SizeBytes
 	}
-	visible := m.visibleIndexes()
-	start, end := m.pageWindow(visible)
+	n := len(m.rels)
+	start, end := m.pageWindow(n)
 	var b strings.Builder
 	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
 		colSize, "%", "", "KIND", "NAME")
 
 	indexHeaderShown := false
-	for _, i := range visible[start:end] {
+	for i := start; i < end; i++ {
 		r := m.rels[i]
 		isIndex := r.Kind.IsIndex()
 		if isIndex && !indexHeaderShown {
@@ -983,30 +838,24 @@ func (m *model) renderRelations() string {
 		b.WriteString(row)
 		b.WriteString("\n")
 	}
-	if len(visible) == 0 && m.filterLower != "" {
-		b.WriteString(dimStyle.Render("  no matches") + "\n")
-	}
 	return b.String()
 }
 
 func (m *model) renderFooter() string {
-	if m.filterMode {
-		return "/" + m.filter
-	}
 	sortLabel := "size"
 	if m.sort == sortName {
 		sortLabel = "name"
 	}
 	left := dimStyle.Render(
 		fmt.Sprintf(
-			" [enter] drill  [backspace] up  [s] sort:%s  [/] filter  [r] reload  [q] quit",
+			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
 			sortLabel,
 		),
 	)
 	if m.loading {
 		left = dimStyle.Render(" loading...  [q] quit")
 	}
-	pos, total := m.filteredPos()
+	pos, total := m.cursorPos()
 	right := dimStyle.Render(fmt.Sprintf("%d/%d ", pos, total))
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
@@ -1036,13 +885,6 @@ func cursor(i, c int) string {
 		return ">"
 	}
 	return " "
-}
-
-func match(name, filterLower string) bool {
-	if filterLower == "" {
-		return true
-	}
-	return strings.Contains(strings.ToLower(name), filterLower)
 }
 
 func humanizeCount(n int64) string {
