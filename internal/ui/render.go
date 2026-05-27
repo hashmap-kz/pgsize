@@ -23,14 +23,102 @@ func DisableStyles() {
 	bloatStyle = lipgloss.NewStyle()
 }
 
+const (
+	// barWidth is the inner character width of the ASCII progress bar (excluding brackets).
+	barWidth = 32
+
+	// colsPrefix is the total fixed-column character width preceding the name column
+	// in all data rows. 25 accounts for all non-bar fixed chars; bar occupies barWidth+2
+	// (inner width plus brackets).
+	colsPrefix = barWidth + 25
+
+	// colsTableSuffix is the fixed trailing column width shared by the tables/schemas views
+	// (idx and rows columns with their separating spaces).
+	colsTableSuffix = 16
+
+	// colKindWidth is the character width of the relation-kind column.
+	colKindWidth = 8
+
+	// fixedColsDB is the total fixed-column width for the databases view.
+	// The name column is last, so only colsPrefix is fixed.
+	fixedColsDB = colsPrefix
+
+	// fixedColsTables is the total fixed-column width for the tables view.
+	fixedColsTables = colsPrefix + colsTableSuffix
+
+	// fixedColsRelations is the total fixed-column width for the relations view.
+	fixedColsRelations = colsPrefix + colKindWidth + 2
+
+	// nameWidthSchemas is the fixed name-column character width in the schemas view.
+	nameWidthSchemas = 30
+
+	// nameWidthTablesMax caps the name-column character width in the tables view.
+	nameWidthTablesMax = 40
+
+	// chromeLinesView is the number of fixed UI chrome rows subtracted when padding
+	// the body to terminal height in renderView.
+	chromeLinesView = 5
+
+	// chromeLinesPage is the number of fixed UI chrome rows subtracted when computing
+	// the scrollable page window in pageWindow.
+	chromeLinesPage = 6
+
+	// indexSepWidth is the dash count in the index-group separator within the relations view.
+	indexSepWidth = 60
+)
+
+// headerFmt holds the column header labels that mirror the rowFmt layout.
+// The common prefix occupies the same character positions as rowFmt's fixed
+// columns, so headers and data rows align without manual spacing.
+type headerFmt struct {
+	size   string // size column label (may carry " *" sort indicator)
+	name   string // name column label (may carry " *" sort indicator)
+	nameW  int    // name-column width; must match the data rows' nameW
+	extras string // pre-formatted trailing column labels (optional)
+}
+
+// String renders the header row.
+func (h headerFmt) String() string {
+	base := fmt.Sprintf("   %-10s %5s  %-34s %-*s",
+		h.size, "%", "", h.nameW, h.name)
+	if h.extras != "" {
+		return base + h.extras
+	}
+	return base
+}
+
+// rowFmt holds the display values for every column in a data row.
+// Using a struct instead of a long positional fmt.Sprintf arg list makes each
+// column mapping explicit and prevents off-by-one mistakes when reading or
+// modifying the layout.
+type rowFmt struct {
+	cur    string  // cursor symbol, from cursor()
+	size   string  // humanized byte count
+	pct    float64 // percentage of the view total
+	bar    string  // rendered progress bar, from bar() or bloatBar()
+	name   string  // item name, already truncated to nameW
+	nameW  int     // name-column width for %-* left-alignment
+	extras string  // pre-formatted view-specific trailing columns (optional)
+}
+
+// String renders all columns: the six common ones followed by extras if present.
+func (r rowFmt) String() string {
+	base := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s",
+		r.cur, r.size, r.pct, r.bar, r.nameW, r.name)
+	if r.extras != "" {
+		return base + r.extras
+	}
+	return base
+}
+
 func (m *model) renderView() string {
 	if m.err != nil {
 		return fmt.Sprintf("error: %v\n\n [backspace] dismiss  [q] quit", m.err)
 	}
 
 	body := m.renderBody()
-	if m.height > 5 {
-		if need := m.height - 5 - strings.Count(body, "\n"); need > 0 {
+	if m.height > chromeLinesView {
+		if need := m.height - chromeLinesView - strings.Count(body, "\n"); need > 0 {
 			body += strings.Repeat("\n", need)
 		}
 	}
@@ -143,10 +231,7 @@ func (m *model) renderHeader() string {
 		left = " pgsize  " + breadcrumb(parts...)
 		right = "table: " + humanize(total)
 	}
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 1 {
-		pad = 1
-	}
+	pad := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return headerStyle.Render(left) + strings.Repeat(" ", pad) + headerStyle.Render(right)
 }
 
@@ -170,20 +255,14 @@ func (m *model) renderBody() string {
 }
 
 // pageWindow returns the [start, end) row range to display given the cursor
-// position and terminal height. The column-header line and 5 chrome lines
-// (app header, two separators, blank, footer) are subtracted.
+// position and terminal height. The column-header line and chromeLinesPage chrome
+// lines (app header, two separators, blank, footer) are subtracted.
 func (m *model) pageWindow(n int) (start, end int) {
-	maxRows := m.height - 6
-	if maxRows < 1 {
-		maxRows = 1
-	}
+	maxRows := max(m.height-chromeLinesPage, 1)
 	if m.cursor >= maxRows {
 		start = m.cursor - maxRows + 1
 	}
-	end = start + maxRows
-	if end > n {
-		end = n
-	}
+	end = min(start+maxRows, n)
 	return start, end
 }
 
@@ -214,22 +293,25 @@ func (m *model) renderDatabases() string {
 	} else {
 		sizeHdr += " *"
 	}
+	nameW := max(m.width-fixedColsDB, 1)
 	n := len(m.dbs)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %s\n", sizeHdr, "%", "", nameHdr)
+	fmtx.Fprintln(&b, headerFmt{size: sizeHdr, name: nameHdr, nameW: nameW}.String())
 	for i := start; i < end; i++ {
 		d := m.dbs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(d.SizeBytes) / float64(total) * 100
 		}
-		nameW := m.width - 57
-		if nameW < 1 {
-			nameW = 1
-		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %s",
-			cursor(i, m.cursor), humanize(d.SizeBytes), pct, bar(pct, 32), trunc(d.Name, nameW))
+		row := rowFmt{
+			cur:   cursor(i, m.cursor),
+			size:  humanize(d.SizeBytes),
+			pct:   pct,
+			bar:   bar(pct, barWidth),
+			name:  trunc(d.Name, nameW),
+			nameW: nameW,
+		}.String()
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -253,17 +335,27 @@ func (m *model) renderSchemas() string {
 	n := len(m.schs)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-30s %7s %5s %9s\n",
-		sizeHdr, "%", "", schemaHdr, "TABLES", "IDX", "ROWS")
+	fmtx.Fprintln(&b, headerFmt{
+		size:   sizeHdr,
+		name:   schemaHdr,
+		nameW:  nameWidthSchemas,
+		extras: fmt.Sprintf(" %7s %5s %9s", "TABLES", "IDX", "ROWS"),
+	}.String())
 	for i := start; i < end; i++ {
 		s := m.schs[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(s.SizeBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-30s %7d %5d %9s",
-			cursor(i, m.cursor), humanize(s.SizeBytes), pct, bar(pct, 32),
-			trunc(s.Name, 30), s.TableCount, s.IndexCount, humanizeCount(s.RowCount))
+		row := rowFmt{
+			cur:    cursor(i, m.cursor),
+			size:   humanize(s.SizeBytes),
+			pct:    pct,
+			bar:    bar(pct, barWidth),
+			name:   trunc(s.Name, nameWidthSchemas),
+			nameW:  nameWidthSchemas,
+			extras: fmt.Sprintf(" %7d %5d %9s", s.TableCount, s.IndexCount, humanizeCount(s.RowCount)),
+		}.String()
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -284,30 +376,31 @@ func (m *model) renderTables() string {
 	} else {
 		sizeHdr += " *"
 	}
-	nameW := min(m.width-73, 40)
-	if nameW < 1 {
-		nameW = 1
-	}
+	nameW := max(min(m.width-fixedColsTables, nameWidthTablesMax), 1)
 	n := len(m.tbls)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(
-		&b,
-		"   %-10s %5s  %-34s %-*s %5s %9s\n",
-		sizeHdr, "%", "", nameW, tableHdr, "IDX", "ROWS",
-	)
+	fmtx.Fprintln(&b, headerFmt{
+		size:   sizeHdr,
+		name:   tableHdr,
+		nameW:  nameW,
+		extras: fmt.Sprintf(" %5s %9s", "IDX", "ROWS"),
+	}.String())
 	for i := start; i < end; i++ {
 		t := m.tbls[i]
 		pct := 0.0
 		if total > 0 {
 			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
-		row := fmt.Sprintf(
-			" %1s %10s %5.1f  %s  %-*s %5d %9s",
-			cursor(i, m.cursor), humanize(t.TotalBytes), pct,
-			bloatBar(pct, t.BloatPct, 32), nameW, trunc(t.Name, nameW),
-			len(t.Indexes), humanizeCount(t.RowCount),
-		)
+		row := rowFmt{
+			cur:    cursor(i, m.cursor),
+			size:   humanize(t.TotalBytes),
+			pct:    pct,
+			bar:    bloatBar(pct, t.BloatPct, barWidth),
+			name:   trunc(t.Name, nameW),
+			nameW:  nameW,
+			extras: fmt.Sprintf(" %5d %9s", len(t.Indexes), humanizeCount(t.RowCount)),
+		}.String()
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -325,15 +418,19 @@ func (m *model) renderRelations() string {
 	n := len(m.rels)
 	start, end := m.pageWindow(n)
 	var b strings.Builder
-	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-8s %s\n",
-		colSize, "%", "", "KIND", "NAME")
+	fmtx.Fprintln(&b, headerFmt{
+		size:   colSize,
+		name:   "KIND",
+		nameW:  colKindWidth,
+		extras: " NAME",
+	}.String())
 
 	indexHeaderShown := false
 	for i := start; i < end; i++ {
 		r := m.rels[i]
 		isIndex := r.Kind.IsIndex()
 		if isIndex && !indexHeaderShown {
-			b.WriteString(dimStyle.Render(" --- indexes " + strings.Repeat("-", 60)))
+			b.WriteString(dimStyle.Render(" --- indexes " + strings.Repeat("-", indexSepWidth)))
 			b.WriteString("\n")
 			indexHeaderShown = true
 		}
@@ -342,13 +439,16 @@ func (m *model) renderRelations() string {
 		if total > 0 {
 			pct = float64(r.SizeBytes) / float64(total) * 100
 		}
-		nameW := m.width - 67
-		if nameW < 1 {
-			nameW = 1
-		}
-		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-8s %s",
-			cursor(i, m.cursor), humanize(r.SizeBytes), pct,
-			bar(pct, 32), r.Kind.String(), trunc(r.Name, nameW))
+		nameW := max(m.width-fixedColsRelations, 1)
+		row := rowFmt{
+			cur:    cursor(i, m.cursor),
+			size:   humanize(r.SizeBytes),
+			pct:    pct,
+			bar:    bar(pct, barWidth),
+			name:   r.Kind.String(),
+			nameW:  colKindWidth,
+			extras: " " + trunc(r.Name, nameW),
+		}.String()
 		if i == m.cursor {
 			row = cursorStyle.Render(row)
 		}
@@ -378,9 +478,6 @@ func (m *model) renderFooter() string {
 	}
 	pos, total := m.cursorPos()
 	right := dimStyle.Render(fmt.Sprintf("%d/%d ", pos, total))
-	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 1 {
-		pad = 1
-	}
+	pad := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", pad) + right
 }
