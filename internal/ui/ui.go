@@ -17,7 +17,8 @@ import (
 type viewKind int
 
 const (
-	viewDatabases viewKind = iota
+	viewClusters viewKind = iota
+	viewDatabases
 	viewSchemas
 	viewTables
 	viewRelations
@@ -36,9 +37,24 @@ const (
 	sortName
 )
 
+// Cluster holds the connection details for one PostgreSQL cluster.
+type Cluster struct {
+	Name string
+	DSN  string
+	Pool *pgxpool.Pool
+}
+
+type clusterState struct {
+	Cluster
+	dbCache  []pg.Database
+	schCache map[string][]pg.Schema
+	tblCache map[string][]pg.Table
+	relCache map[string][]pg.Relation
+}
+
 type model struct {
-	pool *pgxpool.Pool // base pool, connected to the initial database
-	dsn  string        // original DSN for reconnecting to a chosen database
+	clusters   []clusterState
+	curCluster int
 
 	view   viewKind
 	dbs    []pg.Database
@@ -52,10 +68,6 @@ type model struct {
 	curDB     string
 	curSchema string
 	curTable  string
-
-	schCache map[string][]pg.Schema
-	tblCache map[string][]pg.Table
-	relCache map[string][]pg.Relation
 
 	loading bool
 	loadID  uint64
@@ -76,46 +88,65 @@ type frame struct {
 // messages
 
 type loadedDatabases struct {
-	loadID uint64
-	items  []pg.Database
-	err    error
+	loadID     uint64
+	clusterIdx int
+	items      []pg.Database
+	err        error
 }
 type loadedSchemas struct {
-	loadID uint64
-	db     string
-	items  []pg.Schema
-	err    error
+	loadID     uint64
+	clusterIdx int
+	db         string
+	items      []pg.Schema
+	err        error
 }
 type loadedTables struct {
-	loadID uint64
-	db     string
-	schema string
-	items  []pg.Table
-	err    error
+	loadID     uint64
+	clusterIdx int
+	db         string
+	schema     string
+	items      []pg.Table
+	err        error
 }
 type loadedRelations struct {
-	loadID uint64
-	db     string
-	schema string
-	table  string
-	items  []pg.Relation
-	err    error
+	loadID     uint64
+	clusterIdx int
+	db         string
+	schema     string
+	table      string
+	items      []pg.Relation
+	err        error
 }
 
-func InitialModel(pool *pgxpool.Pool, dbs []pg.Database, dsn string) tea.Model {
-	return &model{
-		pool:     pool,
-		dsn:      dsn,
-		view:     viewDatabases,
-		dbs:      dbs,
-		sort:     sortSize,
-		schCache: make(map[string][]pg.Schema),
-		tblCache: make(map[string][]pg.Table),
-		relCache: make(map[string][]pg.Relation),
+func InitialModel(clusters []Cluster) tea.Model {
+	cs := make([]clusterState, len(clusters))
+	for i, c := range clusters {
+		cs[i] = clusterState{
+			Cluster:  c,
+			schCache: make(map[string][]pg.Schema),
+			tblCache: make(map[string][]pg.Table),
+			relCache: make(map[string][]pg.Relation),
+		}
 	}
+	view := viewClusters
+	if len(cs) == 1 {
+		view = viewDatabases
+	}
+	return &model{clusters: cs, view: view, sort: sortSize}
 }
 
-func (m *model) Init() tea.Cmd { return nil }
+func (m *model) Init() tea.Cmd {
+	if len(m.clusters) == 1 {
+		m.loading = true
+		loadID := m.nextLoadID()
+		pool := m.clusters[0].Pool
+		return func() tea.Msg {
+			items, err := pg.ListDatabases(context.Background(), pool)
+			return loadedDatabases{loadID: loadID, clusterIdx: 0, items: items, err: err}
+		}
+	}
+	return nil
+}
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -127,7 +158,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 
 	case loadedDatabases:
-		if !m.acceptLoad(msg.loadID) {
+		if !m.acceptLoad(msg.loadID) || msg.clusterIdx != m.curCluster {
 			return m, nil
 		}
 		m.loading = false
@@ -136,11 +167,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.dbs = msg.items
+		m.clusters[msg.clusterIdx].dbCache = msg.items
+		m.view = viewDatabases
 		m.cursor = 0
 		return m, nil
 
 	case loadedSchemas:
-		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB {
+		if !m.acceptLoad(msg.loadID) || msg.clusterIdx != m.curCluster || msg.db != m.curDB {
 			return m, nil
 		}
 		m.loading = false
@@ -149,13 +182,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.schs = msg.items
-		m.schCache[msg.db] = msg.items
+		m.clusters[msg.clusterIdx].schCache[msg.db] = msg.items
 		m.view = viewSchemas
 		m.cursor = 0
 		return m, nil
 
 	case loadedTables:
-		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema {
+		if !m.acceptLoad(msg.loadID) || msg.clusterIdx != m.curCluster ||
+			msg.db != m.curDB || msg.schema != m.curSchema {
 			return m, nil
 		}
 		m.loading = false
@@ -164,14 +198,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.tbls = msg.items
-		m.tblCache[tableCacheKey(msg.db, msg.schema)] = msg.items
+		m.clusters[msg.clusterIdx].tblCache[tableCacheKey(msg.db, msg.schema)] = msg.items
 		m.view = viewTables
 		m.cursor = 0
 		return m, nil
 
 	case loadedRelations:
-		if !m.acceptLoad(msg.loadID) || msg.db != m.curDB || msg.schema != m.curSchema ||
-			msg.table != m.curTable {
+		if !m.acceptLoad(msg.loadID) || msg.clusterIdx != m.curCluster ||
+			msg.db != m.curDB || msg.schema != m.curSchema || msg.table != m.curTable {
 			return m, nil
 		}
 		m.loading = false
@@ -180,7 +214,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.rels = msg.items
-		m.relCache[relationCacheKey(msg.db, msg.schema, msg.table)] = msg.items
+		m.clusters[msg.clusterIdx].relCache[relationCacheKey(msg.db, msg.schema, msg.table)] = msg.items
 		m.view = viewRelations
 		m.cursor = 0
 		return m, nil
@@ -243,6 +277,8 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) rowCount() int {
 	switch m.view {
+	case viewClusters:
+		return len(m.clusters)
 	case viewDatabases:
 		return len(m.dbs)
 	case viewSchemas:
@@ -287,13 +323,34 @@ func (m *model) drillIn() tea.Cmd {
 		curDB: m.curDB, curSch: m.curSchema, curTbl: m.curTable,
 	}
 	switch m.view {
+	case viewClusters:
+		ci := m.cursor
+		m.stack = append(m.stack, f)
+		m.curCluster = ci
+		m.curDB = ""
+		m.curSchema = ""
+		m.curTable = ""
+		if m.clusters[ci].dbCache != nil {
+			m.dbs = m.clusters[ci].dbCache
+			m.view = viewDatabases
+			m.cursor = 0
+			return nil
+		}
+		m.loading = true
+		loadID := m.nextLoadID()
+		pool := m.clusters[ci].Pool
+		return func() tea.Msg {
+			items, err := pg.ListDatabases(context.Background(), pool)
+			return loadedDatabases{loadID: loadID, clusterIdx: ci, items: items, err: err}
+		}
 	case viewDatabases:
 		dbName := m.dbs[m.cursor].Name
 		m.stack = append(m.stack, f)
 		m.curDB = dbName
 		m.curSchema = ""
 		m.curTable = ""
-		if schs, ok := m.schCache[dbName]; ok {
+		c := &m.clusters[m.curCluster]
+		if schs, ok := c.schCache[dbName]; ok {
 			m.schs = schs
 			m.view = viewSchemas
 			m.cursor = 0
@@ -301,18 +358,19 @@ func (m *model) drillIn() tea.Cmd {
 		}
 		m.loading = true
 		loadID := m.nextLoadID()
-		dsn := m.dsn
+		dsn, ci := c.DSN, m.curCluster
 		return func() tea.Msg {
 			items, err := withDatabasePool(context.Background(), dsn, dbName, pg.ListSchemas)
-			return loadedSchemas{loadID: loadID, db: dbName, items: items, err: err}
+			return loadedSchemas{loadID: loadID, clusterIdx: ci, db: dbName, items: items, err: err}
 		}
 	case viewSchemas:
 		schemaName := m.schs[m.cursor].Name
 		m.stack = append(m.stack, f)
 		m.curSchema = schemaName
 		m.curTable = ""
+		c := &m.clusters[m.curCluster]
 		cacheKey := tableCacheKey(m.curDB, schemaName)
-		if tbls, ok := m.tblCache[cacheKey]; ok {
+		if tbls, ok := c.tblCache[cacheKey]; ok {
 			m.tbls = tbls
 			m.view = viewTables
 			m.cursor = 0
@@ -320,30 +378,23 @@ func (m *model) drillIn() tea.Cmd {
 		}
 		m.loading = true
 		loadID := m.nextLoadID()
-		dsn, dbName := m.dsn, m.curDB
+		dsn, dbName, ci := c.DSN, m.curDB, m.curCluster
 		return func() tea.Msg {
 			items, err := withDatabasePool(
-				context.Background(),
-				dsn,
-				dbName,
+				context.Background(), dsn, dbName,
 				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
 					return pg.ListTables(ctx, pool, schemaName)
 				},
 			)
-			return loadedTables{
-				loadID: loadID,
-				db:     dbName,
-				schema: schemaName,
-				items:  items,
-				err:    err,
-			}
+			return loadedTables{loadID: loadID, clusterIdx: ci, db: dbName, schema: schemaName, items: items, err: err}
 		}
 	case viewTables:
 		tableName := m.tbls[m.cursor].Name
 		m.stack = append(m.stack, f)
 		m.curTable = tableName
+		c := &m.clusters[m.curCluster]
 		cacheKey := relationCacheKey(m.curDB, m.curSchema, tableName)
-		if rels, ok := m.relCache[cacheKey]; ok {
+		if rels, ok := c.relCache[cacheKey]; ok {
 			m.rels = rels
 			m.view = viewRelations
 			m.cursor = 0
@@ -351,23 +402,18 @@ func (m *model) drillIn() tea.Cmd {
 		}
 		m.loading = true
 		loadID := m.nextLoadID()
-		dsn, dbName, schemaName := m.dsn, m.curDB, m.curSchema
+		dsn, dbName, schemaName, ci := c.DSN, m.curDB, m.curSchema, m.curCluster
 		return func() tea.Msg {
 			items, err := withDatabasePool(
-				context.Background(),
-				dsn,
-				dbName,
+				context.Background(), dsn, dbName,
 				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
 					return pg.ListRelations(ctx, pool, schemaName, tableName)
 				},
 			)
 			return loadedRelations{
-				loadID: loadID,
-				db:     dbName,
-				schema: schemaName,
-				table:  tableName,
-				items:  items,
-				err:    err,
+				loadID: loadID, clusterIdx: ci,
+				db: dbName, schema: schemaName, table: tableName,
+				items: items, err: err,
 			}
 		}
 	}
@@ -393,62 +439,52 @@ func (m *model) reload() tea.Cmd {
 	}
 	m.loading = true
 	loadID := m.nextLoadID()
+	c := &m.clusters[m.curCluster]
+	ci := m.curCluster
 	switch m.view {
 	case viewDatabases:
-		pool := m.pool
+		c.dbCache = nil
+		pool := c.Pool
 		return func() tea.Msg {
 			items, err := pg.ListDatabases(context.Background(), pool)
-			return loadedDatabases{loadID: loadID, items: items, err: err}
+			return loadedDatabases{loadID: loadID, clusterIdx: ci, items: items, err: err}
 		}
 	case viewSchemas:
 		dbName := m.curDB
 		m.invalidateDB(dbName)
-		dsn := m.dsn
+		dsn := c.DSN
 		return func() tea.Msg {
 			items, err := withDatabasePool(context.Background(), dsn, dbName, pg.ListSchemas)
-			return loadedSchemas{loadID: loadID, db: dbName, items: items, err: err}
+			return loadedSchemas{loadID: loadID, clusterIdx: ci, db: dbName, items: items, err: err}
 		}
 	case viewTables:
 		dbName, schemaName := m.curDB, m.curSchema
 		m.invalidateSchema(dbName, schemaName)
-		dsn := m.dsn
+		dsn := c.DSN
 		return func() tea.Msg {
 			items, err := withDatabasePool(
-				context.Background(),
-				dsn,
-				dbName,
+				context.Background(), dsn, dbName,
 				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
 					return pg.ListTables(ctx, pool, schemaName)
 				},
 			)
-			return loadedTables{
-				loadID: loadID,
-				db:     dbName,
-				schema: schemaName,
-				items:  items,
-				err:    err,
-			}
+			return loadedTables{loadID: loadID, clusterIdx: ci, db: dbName, schema: schemaName, items: items, err: err}
 		}
 	case viewRelations:
 		dbName, schemaName, tableName := m.curDB, m.curSchema, m.curTable
-		delete(m.relCache, relationCacheKey(dbName, schemaName, tableName))
-		dsn := m.dsn
+		delete(c.relCache, relationCacheKey(dbName, schemaName, tableName))
+		dsn := c.DSN
 		return func() tea.Msg {
 			items, err := withDatabasePool(
-				context.Background(),
-				dsn,
-				dbName,
+				context.Background(), dsn, dbName,
 				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
 					return pg.ListRelations(ctx, pool, schemaName, tableName)
 				},
 			)
 			return loadedRelations{
-				loadID: loadID,
-				db:     dbName,
-				schema: schemaName,
-				table:  tableName,
-				items:  items,
-				err:    err,
+				loadID: loadID, clusterIdx: ci,
+				db: dbName, schema: schemaName, table: tableName,
+				items: items, err: err,
 			}
 		}
 	}
@@ -482,26 +518,28 @@ func relationCacheKey(db, schema, table string) string {
 }
 
 func (m *model) invalidateDB(db string) {
-	delete(m.schCache, db)
+	c := &m.clusters[m.curCluster]
+	delete(c.schCache, db)
 	prefix := db + nilByte
-	for k := range m.tblCache {
+	for k := range c.tblCache {
 		if strings.HasPrefix(k, prefix) {
-			delete(m.tblCache, k)
+			delete(c.tblCache, k)
 		}
 	}
-	for k := range m.relCache {
+	for k := range c.relCache {
 		if strings.HasPrefix(k, prefix) {
-			delete(m.relCache, k)
+			delete(c.relCache, k)
 		}
 	}
 }
 
 func (m *model) invalidateSchema(db, schema string) {
-	delete(m.tblCache, tableCacheKey(db, schema))
+	c := &m.clusters[m.curCluster]
+	delete(c.tblCache, tableCacheKey(db, schema))
 	prefix := db + nilByte + schema + nilByte
-	for k := range m.relCache {
+	for k := range c.relCache {
 		if strings.HasPrefix(k, prefix) {
-			delete(m.relCache, k)
+			delete(c.relCache, k)
 		}
 	}
 }
@@ -613,15 +651,29 @@ func breadcrumb(parts ...string) string {
 	return strings.Join(parts, " › ")
 }
 
+func (m *model) clusterPrefix() string {
+	if len(m.clusters) > 1 {
+		return fmt.Sprintf("C=%s", m.clusters[m.curCluster].Name)
+	}
+	return ""
+}
+
 func (m *model) renderHeader() string {
 	var left, right string
+	multi := len(m.clusters) > 1
 	switch m.view {
+	case viewClusters:
+		left = " pgsize"
+		right = fmt.Sprintf("%d clusters", len(m.clusters))
 	case viewDatabases:
 		var total uint64
 		for _, d := range m.dbs {
 			total += d.SizeBytes
 		}
 		left = " pgsize"
+		if multi {
+			left += "  " + m.clusterPrefix()
+		}
 		right = "total: " + humanize(total)
 	case viewSchemas:
 		var total uint64
@@ -629,7 +681,11 @@ func (m *model) renderHeader() string {
 			total += s.SizeBytes
 		}
 		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
-		left = " pgsize  " + dbPart
+		parts := []string{dbPart}
+		if multi {
+			parts = append([]string{m.clusterPrefix()}, parts...)
+		}
+		left = " pgsize  " + breadcrumb(parts...)
 		right = "db: " + humanize(total)
 	case viewTables:
 		var total uint64
@@ -638,7 +694,11 @@ func (m *model) renderHeader() string {
 		}
 		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
 		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
-		left = " pgsize  " + breadcrumb(dbPart, schPart)
+		parts := []string{dbPart, schPart}
+		if multi {
+			parts = append([]string{m.clusterPrefix()}, parts...)
+		}
+		left = " pgsize  " + breadcrumb(parts...)
 		right = "schema: " + humanize(total)
 	case viewRelations:
 		var total uint64
@@ -648,7 +708,11 @@ func (m *model) renderHeader() string {
 		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
 		schPart := fmt.Sprintf("S=%s (%s)", m.curSchema, humanize(m.curSchemaSize()))
 		tblPart := fmt.Sprintf("T=%s (%s)", m.curTable, humanize(m.curTableSize()))
-		left = " pgsize  " + breadcrumb(dbPart, schPart, tblPart)
+		parts := []string{dbPart, schPart, tblPart}
+		if multi {
+			parts = append([]string{m.clusterPrefix()}, parts...)
+		}
+		left = " pgsize  " + breadcrumb(parts...)
 		right = "table: " + humanize(total)
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
@@ -663,6 +727,8 @@ func (m *model) renderBody() string {
 		return dimStyle.Render(" Loading...") + "\n"
 	}
 	switch m.view {
+	case viewClusters:
+		return m.renderClusters()
 	case viewDatabases:
 		return m.renderDatabases()
 	case viewSchemas:
@@ -691,6 +757,22 @@ func (m *model) pageWindow(n int) (start, end int) {
 		end = n
 	}
 	return start, end
+}
+
+func (m *model) renderClusters() string {
+	n := len(m.clusters)
+	start, end := m.pageWindow(n)
+	var b strings.Builder
+	fmtx.Fprintf(&b, "   %-s\n", "CLUSTER")
+	for i := start; i < end; i++ {
+		row := fmt.Sprintf(" %1s %s", cursor(i, m.cursor), m.clusters[i].Name)
+		if i == m.cursor {
+			row = cursorStyle.Render(row)
+		}
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func (m *model) renderDatabases() string {
@@ -849,16 +931,17 @@ func (m *model) renderRelations() string {
 }
 
 func (m *model) renderFooter() string {
-	sortLabel := "size"
-	if m.sort == sortName {
-		sortLabel = "name"
+	var hintStr string
+	if m.view == viewClusters {
+		hintStr = " [enter] select  [j/k] move  [q] quit"
+	} else {
+		sortLabel := "size"
+		if m.sort == sortName {
+			sortLabel = "name"
+		}
+		hintStr = fmt.Sprintf(" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit", sortLabel)
 	}
-	left := dimStyle.Render(
-		fmt.Sprintf(
-			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
-			sortLabel,
-		),
-	)
+	left := dimStyle.Render(hintStr)
 	if m.loading {
 		left = dimStyle.Render(" loading...  [q] quit")
 	}
