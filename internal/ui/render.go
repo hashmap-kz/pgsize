@@ -436,15 +436,17 @@ func (m *model) renderFooter() string {
 	var hintStr string
 	switch m.view {
 	case viewClusters:
-		hintStr = " [enter] select  [j/k] move  [q] quit"
+		hintStr = " [hjkl/arrows] nav  [q] quit"
 	case viewDatabases:
 		hintStr = fmt.Sprintf(
-			" [enter] drill  [T] top tables  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
+			" [hjkl/arrows] nav  [T] top  [s] sort:%s  [r] reload  [q] quit",
 			sortLabel,
 		)
+	case viewRelations:
+		hintStr = " [hjkl/arrows] nav  [r] reload  [q] quit"
 	default:
 		hintStr = fmt.Sprintf(
-			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
+			" [hjkl/arrows] nav  [s] sort:%s  [r] reload  [q] quit",
 			sortLabel,
 		)
 	}
