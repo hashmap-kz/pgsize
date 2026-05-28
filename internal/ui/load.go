@@ -10,6 +10,39 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const topTablesLimit = 50
+
+func (m *model) drillInTopTables() tea.Cmd {
+	if m.rowCount() == 0 {
+		return nil
+	}
+	dbName := m.dbs[m.cursor].Name
+	f := frame{view: m.view, cursor: m.cursor, curDB: m.curDB}
+	m.stack = append(m.stack, f)
+	m.curDB = dbName
+	m.curSchema = ""
+	m.curTable = ""
+	c := &m.clusters[m.curCluster]
+	if tbls, ok := c.topTblCache[dbName]; ok {
+		m.topTbls = tbls
+		m.view = viewTopTables
+		m.cursor = 0
+		return nil
+	}
+	m.loading = true
+	loadID := m.nextLoadID()
+	dsn, ci := c.DSN, m.curCluster
+	return func() tea.Msg {
+		items, err := withDatabasePool(
+			context.Background(), dsn, dbName,
+			func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+				return pg.ListTopTables(ctx, pool, topTablesLimit)
+			},
+		)
+		return loadedTopTables{loadID: loadID, clusterIdx: ci, db: dbName, items: items, err: err}
+	}
+}
+
 func (m *model) drillIn() tea.Cmd {
 	if m.rowCount() == 0 {
 		return nil
@@ -119,6 +152,35 @@ func (m *model) drillIn() tea.Cmd {
 				items: items, err: err,
 			}
 		}
+	case viewTopTables:
+		t := m.topTbls[m.cursor]
+		m.stack = append(m.stack, f)
+		m.curSchema = t.Schema
+		m.curTable = t.Name
+		c := &m.clusters[m.curCluster]
+		cacheKey := relationCacheKey(m.curDB, t.Schema, t.Name)
+		if rels, ok := c.relCache[cacheKey]; ok {
+			m.rels = rels
+			m.view = viewRelations
+			m.cursor = 0
+			return nil
+		}
+		m.loading = true
+		loadID := m.nextLoadID()
+		dsn, dbName, schemaName, tableName, ci := c.DSN, m.curDB, t.Schema, t.Name, m.curCluster
+		return func() tea.Msg {
+			items, err := withDatabasePool(
+				context.Background(), dsn, dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Relation, error) {
+					return pg.ListRelations(ctx, pool, schemaName, tableName)
+				},
+			)
+			return loadedRelations{
+				loadID: loadID, clusterIdx: ci,
+				db: dbName, schema: schemaName, table: tableName,
+				items: items, err: err,
+			}
+		}
 	case viewRelations: // deepest level - nothing to drill into
 	}
 	return nil
@@ -198,6 +260,19 @@ func (m *model) reload() tea.Cmd {
 				items: items, err: err,
 			}
 		}
+	case viewTopTables:
+		dbName := m.curDB
+		delete(c.topTblCache, dbName)
+		dsn := c.DSN
+		return func() tea.Msg {
+			items, err := withDatabasePool(
+				context.Background(), dsn, dbName,
+				func(ctx context.Context, pool *pgxpool.Pool) ([]pg.Table, error) {
+					return pg.ListTopTables(ctx, pool, topTablesLimit)
+				},
+			)
+			return loadedTopTables{loadID: loadID, clusterIdx: ci, db: dbName, items: items, err: err}
+		}
 	case viewClusters: // clusters are static connections - nothing to reload
 	}
 	return nil
@@ -232,6 +307,7 @@ func relationCacheKey(db, schema, table string) string {
 func (m *model) invalidateDB(db string) {
 	c := &m.clusters[m.curCluster]
 	delete(c.schCache, db)
+	delete(c.topTblCache, db)
 	prefix := db + nilByte
 	for k := range c.tblCache {
 		if strings.HasPrefix(k, prefix) {

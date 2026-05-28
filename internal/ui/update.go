@@ -76,6 +76,21 @@ func (m *model) handleMsg(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.view = viewRelations
 		m.cursor = 0
 		return m, nil
+
+	case loadedTopTables:
+		if !m.acceptLoad(msg.loadID) || msg.clusterIdx != m.curCluster || msg.db != m.curDB {
+			return m, nil
+		}
+		m.loading = false
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.topTbls = msg.items
+		m.clusters[msg.clusterIdx].topTblCache[msg.db] = msg.items
+		m.view = viewTopTables
+		m.cursor = 0
+		return m, nil
 	}
 	return m, nil
 }
@@ -110,6 +125,10 @@ func (m *model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.drillIn()
 	case keyBackspace, "h", "left":
 		m.drillOut()
+	case "T":
+		if m.view == viewDatabases {
+			return m, m.drillInTopTables()
+		}
 	case "s":
 		if m.sort == sortSize {
 			m.sort = sortName
@@ -136,6 +155,8 @@ func (m *model) rowCount() int {
 		return len(m.tbls)
 	case viewRelations:
 		return len(m.rels)
+	case viewTopTables:
+		return len(m.topTbls)
 	}
 	return 0
 }
@@ -188,6 +209,13 @@ func (m *model) applySort() {
 			bySize,
 		)
 	case viewClusters: // clusters are ordered by the user's --dsn arguments
+	case viewTopTables:
+		sortBySizeOrName(
+			m.topTbls,
+			func(t pg.Table) uint64 { return t.TotalBytes },
+			func(t pg.Table) string { return t.Schema + "." + t.Name },
+			bySize,
+		)
 	case viewRelations: // relations within a table have no meaningful size-based order
 	}
 }

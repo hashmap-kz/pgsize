@@ -142,6 +142,18 @@ func (m *model) renderHeader() string {
 		}
 		left = " pgsize  " + breadcrumb(parts...)
 		right = "table: " + humanize(total)
+	case viewTopTables:
+		var total uint64
+		for _, t := range m.topTbls {
+			total += t.TotalBytes
+		}
+		dbPart := fmt.Sprintf("D=%s (%s)", m.curDB, humanize(m.curDBSize()))
+		parts := []string{dbPart}
+		if multi {
+			parts = append([]string{m.clusterPrefix()}, parts...)
+		}
+		left = " pgsize  " + breadcrumb(parts...)
+		right = fmt.Sprintf("top %d: %s", len(m.topTbls), humanize(total))
 	}
 	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
@@ -165,6 +177,8 @@ func (m *model) renderBody() string {
 		return m.renderTables()
 	case viewRelations:
 		return m.renderRelations()
+	case viewTopTables:
+		return m.renderTopTables()
 	}
 	return ""
 }
@@ -358,15 +372,77 @@ func (m *model) renderRelations() string {
 	return b.String()
 }
 
-func (m *model) renderFooter() string {
-	var hintStr string
-	if m.view == viewClusters {
-		hintStr = " [enter] select  [j/k] move  [q] quit"
+func (m *model) renderTopTables() string {
+	var total uint64
+	for _, t := range m.topTbls {
+		total += t.TotalBytes
+	}
+	sizeHdr, tableHdr := colSize, "TABLE"
+	if m.sort == sortName {
+		tableHdr += " *"
 	} else {
-		sortLabel := "size"
-		if m.sort == sortName {
-			sortLabel = "name"
+		sizeHdr += " *"
+	}
+
+	// total fixed chars in a row: 68 (spaces + cursor + size + pct + bar + separators + rows)
+	available := m.width - 68
+	schemaW := available / 2
+	if schemaW > 20 {
+		schemaW = 20
+	}
+	if schemaW < 5 {
+		schemaW = 5
+	}
+	tableW := available - schemaW - 1
+	if tableW > 30 {
+		tableW = 30
+	}
+	if tableW < 5 {
+		tableW = 5
+	}
+
+	n := len(m.topTbls)
+	start, end := m.pageWindow(n)
+	var b strings.Builder
+	fmtx.Fprintf(&b, "   %-10s %5s  %-34s %-*s %-*s %9s\n",
+		sizeHdr, "%", "", schemaW, "SCHEMA", tableW, tableHdr, "ROWS")
+	for i := start; i < end; i++ {
+		t := m.topTbls[i]
+		pct := 0.0
+		if total > 0 {
+			pct = float64(t.TotalBytes) / float64(total) * 100
 		}
+		row := fmt.Sprintf(" %1s %10s %5.1f  %s  %-*s %-*s %9s",
+			cursor(i, m.cursor), humanize(t.TotalBytes), pct,
+			bloatBar(pct, t.BloatPct, 32),
+			schemaW, trunc(t.Schema, schemaW),
+			tableW, trunc(t.Name, tableW),
+			humanizeCount(t.RowCount),
+		)
+		if i == m.cursor {
+			row = cursorStyle.Render(row)
+		}
+		b.WriteString(row)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+func (m *model) renderFooter() string {
+	sortLabel := "size"
+	if m.sort == sortName {
+		sortLabel = "name"
+	}
+	var hintStr string
+	switch m.view {
+	case viewClusters:
+		hintStr = " [enter] select  [j/k] move  [q] quit"
+	case viewDatabases:
+		hintStr = fmt.Sprintf(
+			" [enter] drill  [T] top tables  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
+			sortLabel,
+		)
+	default:
 		hintStr = fmt.Sprintf(
 			" [enter] drill  [backspace] up  [s] sort:%s  [r] reload  [q] quit",
 			sortLabel,
