@@ -15,6 +15,7 @@ const (
 	viewSchemas
 	viewTables
 	viewRelations
+	viewTopTables
 )
 
 const (
@@ -39,24 +40,26 @@ type Cluster struct {
 
 type clusterState struct {
 	Cluster
-	dbCache  []pg.Database
-	schCache map[string][]pg.Schema
-	tblCache map[string][]pg.Table
-	relCache map[string][]pg.Relation
+	dbCache     []pg.Database
+	schCache    map[string][]pg.Schema
+	tblCache    map[string][]pg.Table
+	relCache    map[string][]pg.Relation
+	topTblCache map[string][]pg.Table // keyed by db name
 }
 
 type model struct {
 	clusters   []clusterState
 	curCluster int
 
-	view   viewKind
-	dbs    []pg.Database
-	schs   []pg.Schema
-	tbls   []pg.Table
-	rels   []pg.Relation
-	stack  []frame
-	cursor int
-	sort   sortMode
+	view    viewKind
+	dbs     []pg.Database
+	schs    []pg.Schema
+	tbls    []pg.Table
+	rels    []pg.Relation
+	topTbls []pg.Table
+	stack   []frame
+	cursor  int
+	sort    sortMode
 
 	curDB     string
 	curSchema string
@@ -112,15 +115,23 @@ type loadedRelations struct {
 	items      []pg.Relation
 	err        error
 }
+type loadedTopTables struct {
+	loadID     uint64
+	clusterIdx int
+	db         string
+	items      []pg.Table
+	err        error
+}
 
 func InitialModel(clusters []Cluster) tea.Model {
 	cs := make([]clusterState, len(clusters))
 	for i, c := range clusters {
 		cs[i] = clusterState{
-			Cluster:  c,
-			schCache: make(map[string][]pg.Schema),
-			tblCache: make(map[string][]pg.Table),
-			relCache: make(map[string][]pg.Relation),
+			Cluster:     c,
+			schCache:    make(map[string][]pg.Schema),
+			tblCache:    make(map[string][]pg.Table),
+			relCache:    make(map[string][]pg.Relation),
+			topTblCache: make(map[string][]pg.Table),
 		}
 	}
 	view := viewClusters

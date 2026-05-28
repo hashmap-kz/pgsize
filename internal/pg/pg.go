@@ -239,6 +239,50 @@ func ListTables(ctx context.Context, pool *pgxpool.Pool, schema string) ([]Table
 	return out, nil
 }
 
+func ListTopTables(ctx context.Context, pool *pgxpool.Pool, limit int) ([]Table, error) {
+	const q = `
+		SELECT
+		    n.nspname,
+		    c.relname,
+		    pg_total_relation_size(c.oid)::bigint AS total,
+		    GREATEST(c.reltuples::bigint, 0)      AS row_count,
+		    CASE
+		        WHEN COALESCE(st.n_live_tup + st.n_dead_tup, 0) > 0
+		        THEN 100.0 * st.n_dead_tup::float8 / (st.n_live_tup + st.n_dead_tup)
+		        ELSE 0.0
+		    END                                   AS bloat_pct
+		FROM pg_class c
+		JOIN pg_namespace n ON n.oid = c.relnamespace
+		LEFT JOIN pg_stat_user_tables st ON st.schemaname = n.nspname AND st.relname = c.relname
+		WHERE c.relkind IN ('r','p')
+		  AND n.nspname NOT IN ('pg_catalog','information_schema','pg_toast')
+		  AND n.nspname NOT LIKE 'pg_temp_%'
+		  AND n.nspname NOT LIKE 'pg_toast_temp_%'
+		ORDER BY total DESC
+		LIMIT $1
+	`
+	rows, err := pool.Query(ctx, q, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Table
+	for rows.Next() {
+		var t Table
+		var total, rowCount int64
+		var bloatPct float64
+		if err := rows.Scan(&t.Schema, &t.Name, &total, &rowCount, &bloatPct); err != nil {
+			return nil, err
+		}
+		t.TotalBytes = uint64(total) //nolint:gosec
+		t.RowCount = rowCount
+		t.BloatPct = bloatPct
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 func ListRelations(
 	ctx context.Context,
 	pool *pgxpool.Pool,
