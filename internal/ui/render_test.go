@@ -10,6 +10,8 @@ import (
 )
 
 // renderOf sets terminal dimensions and returns the full rendered output.
+//
+//nolint:gocritic
 func renderOf(m model) string {
 	m.width, m.height = 120, 40
 	return m.View()

@@ -1,5 +1,6 @@
 test/integration/** linguist-vendored
 testdata/** linguist-vendored
+internal/ui/testdata/** linguist-vendored
 examples/** linguist-vendored
 hack/** linguist-vendored
 docs/** linguist-vendored
