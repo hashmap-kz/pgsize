@@ -23,6 +23,14 @@ install: build
 test:
 	go test -v -race -cover -count=1 -timeout=5m ./...
 
+.PHONY: update-golden
+update-golden:
+	go test -run TestGolden ./internal/ui/... -update
+
+.PHONY: test-integration
+test-integration:
+	go test -tags integration -v -count=1 -timeout=2m ./test/integration/...
+
 .PHONY: clean
 clean:
 	@rm -rf bin/ dist/ *.log
