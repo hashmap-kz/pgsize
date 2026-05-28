@@ -34,13 +34,10 @@ Examples:
   PGHOST=localhost PGPORT=5432 PGUSER=postgres PGPASSWORD=postgres pgsize
 
 Keys:
-  enter / l / right    drill in / select cluster
-  backspace / h / left go back
-  j / down             move down
-  k / up               move up
-  g / home             jump to top
-  G / end              jump to bottom
-  T                    top tables across all schemas (from database view)
+  hjkl / arrows        navigate
+  enter                drill in / select
+  g / G                jump to top / bottom
+  T                    top tables (from database view)
   s                    toggle sort (size / name)
   r                    reload
   q / ctrl+c           quit
