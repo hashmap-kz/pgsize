@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const topTablesLimit = 50
+const topTablesLimit = 25
 
 func (m *model) drillInTopTables() tea.Cmd {
 	if m.rowCount() == 0 {
