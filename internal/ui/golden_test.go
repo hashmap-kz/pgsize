@@ -19,7 +19,7 @@ func checkGolden(t *testing.T, name, got string) {
 	path := filepath.Join("testdata", name)
 	if *update {
 		require.NoError(t, os.MkdirAll("testdata", 0o755))
-		require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
+		require.NoError(t, os.WriteFile(path, []byte(got), 0o600))
 		return
 	}
 	want, err := os.ReadFile(path)
@@ -69,6 +69,7 @@ func TestGolden_databases(t *testing.T) {
 func TestGolden_schemas(t *testing.T) {
 	DisableStyles()
 	m := newTestModel(viewSchemas, goldenDatabases, goldenSchemas, nil, nil)
+	//nolint:goconst
 	m.curDB = "production"
 	checkGolden(t, "golden_schemas.txt", renderOf(m))
 }
